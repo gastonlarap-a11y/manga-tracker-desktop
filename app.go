@@ -176,12 +176,49 @@ func (a *App) SetSync(url string, database string) (SyncOutcome, error) {
 	if problem := syncurl.Validate(url); problem != syncurl.None {
 		return SyncOutcome{Problem: string(problem)}, nil
 	}
-	if _, err := a.service("set-sync", "--url", url, "--db", syncurl.Database(database)); err != nil {
+	return a.storeSync(url, database)
+}
+
+// SetSyncFields stores a connection assembled from separately typed fields.
+//
+// This is the path for someone who was handed a server, a user and a password
+// rather than a connection string — which is most people. It exists because a
+// MongoDB URI is a URL: a password containing `@`, `:`, `/`, `?`, `#` or `%`
+// has to be percent-encoded inside it, and typed into a single address field it
+// is not. What comes back is not a helpful error but an authentication failure,
+// or a driver reading half the password as a hostname.
+func (a *App) SetSyncFields(address, user, password, database string) (SyncOutcome, error) {
+	url, problem := syncurl.Build(syncurl.Credentials{
+		Address:  address,
+		User:     user,
+		Password: password,
+	})
+	if problem != syncurl.None {
+		return SyncOutcome{Problem: string(problem)}, nil
+	}
+	return a.storeSync(url, database)
+}
+
+// storeSync hands the credential to the service control and waits to find out
+// whether it works.
+//
+// The credential goes through CallWithSecret, which puts it on the CLI's stdin:
+// as an argument it was readable by every process on the machine through `ps`,
+// which is exactly what this project's own rule about `az` forbids.
+func (a *App) storeSync(url string, database string) (SyncOutcome, error) {
+	if _, err := a.deps.CallWithSecret(
+		a.ctx, a.deps.AppDir(), url, "set-sync", "--db", syncurl.Database(database),
+	); err != nil {
 		return SyncOutcome{}, err
 	}
+	return a.awaitSync()
+}
 
-	// Restarting is asynchronous, so asking once would read the state of the
-	// process on its way out.
+// awaitSync reports whether the configuration that was just written connects.
+//
+// Restarting is asynchronous, so asking once would read the state of the process
+// on its way out.
+func (a *App) awaitSync() (SyncOutcome, error) {
 	state := a.deps.Look(a.ctx)
 	if state.BaseURL == "" {
 		return SyncOutcome{}, nil
@@ -206,19 +243,13 @@ func (a *App) UseStoredSync(database string) (SyncOutcome, error) {
 		return SyncOutcome{}, err
 	}
 
-	state := a.deps.Look(a.ctx)
-	if state.BaseURL == "" {
-		return SyncOutcome{UsesSrv: reply.UsesSrv}, nil
-	}
-	status, err := backend.WaitForSync(a.ctx, a.client, state.BaseURL, 20*time.Second)
-	if err != nil {
-		return SyncOutcome{UsesSrv: reply.UsesSrv}, err
-	}
-	return SyncOutcome{
-		Connected: status.Connected,
-		LastError: status.LastError,
-		UsesSrv:   reply.UsesSrv,
-	}, nil
+	// UsesSrv is carried only here. SetSync and SetSyncFields cannot produce
+	// one: syncurl refuses an srv URL before it is ever stored. It survives on
+	// this path because the credential predates that rule — it was put in the
+	// keystore by hand, and it works on this machine.
+	outcome, err := a.awaitSync()
+	outcome.UsesSrv = reply.UsesSrv
+	return outcome, err
 }
 
 // ClearSync turns synchronising off and goes back to local-only.

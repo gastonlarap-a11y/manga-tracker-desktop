@@ -15,6 +15,8 @@ export function RevealExtension():Promise<void>;
 
 export function SetSync(arg1:string,arg2:string):Promise<main.SyncOutcome>;
 
+export function SetSyncFields(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.SyncOutcome>;
+
 export function Settings():Promise<main.Settings>;
 
 export function UseStoredSync(arg1:string):Promise<main.SyncOutcome>;

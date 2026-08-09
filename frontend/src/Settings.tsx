@@ -5,6 +5,7 @@ import {
   RevealExtension,
   Settings as LoadSettings,
   SetSync,
+  SetSyncFields,
   UseStoredSync,
 } from "../wailsjs/go/main/App";
 import type { main } from "../wailsjs/go/models";
@@ -19,6 +20,27 @@ const SYNC_PROBLEMS: Record<string, string> = {
   empty: "Escribí la dirección de tu base de datos.",
   srv: "Las direcciones que empiezan con mongodb+srv:// no funcionan en Windows, porque no se resuelven los registros SRV. Usá la forma directa: mongodb://servidor:puerto/?tls=true",
   notMongo: "Eso no parece una dirección de MongoDB. Tiene que empezar con mongodb://",
+  noHost: "Falta el servidor en la dirección.",
+  credentialsInAddress:
+    "La dirección ya trae un usuario y una contraseña adentro. Dejá los campos de abajo vacíos, o sacáselos a la dirección.",
+  noUser: "Pusiste una contraseña pero no un usuario.",
+};
+
+/**
+ * Cómo se está cargando la conexión. Dos formas, no una bandera: quien tiene la
+ * cadena entera la pega, y quien recibió servidor, usuario y contraseña por
+ * separado los escribe — y en ese caso la contraseña se codifica al armar la
+ * URL, que es lo que hoy falla en silencio.
+ */
+type Entry =
+  | { kind: "fields"; address: string; user: string; password: string }
+  | { kind: "paste"; url: string };
+
+const EMPTY_FIELDS: Entry = {
+  kind: "fields",
+  address: "",
+  user: "",
+  password: "",
 };
 
 type Saving =
@@ -31,7 +53,8 @@ type Saving =
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<main.Settings | null>(null);
   const [wantsSync, setWantsSync] = useState(false);
-  const [url, setUrl] = useState("");
+  const [entry, setEntry] = useState<Entry>(EMPTY_FIELDS);
+  const [showPassword, setShowPassword] = useState(false);
   const [database, setDatabase] = useState("");
   const [saving, setSaving] = useState<Saving>({ kind: "idle" });
   const [manualOpen, setManualOpen] = useState(false);
@@ -47,7 +70,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
   const save = useCallback(() => {
     setSaving({ kind: "saving" });
-    void SetSync(url, database)
+    const stored =
+      entry.kind === "paste"
+        ? SetSync(entry.url, database)
+        : SetSyncFields(entry.address, entry.user, entry.password, database);
+    void stored
       .then((outcome) => {
         if (outcome.problem !== "") {
           setSaving({
@@ -66,7 +93,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       .catch((reason: unknown) =>
         setSaving({ kind: "failed", detail: String(reason) }),
       );
-  }, [url, database, load]);
+  }, [entry, database, load]);
 
   const reuse = useCallback(() => {
     setSaving({ kind: "saving" });
@@ -89,7 +116,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     void ClearSync()
       .then(() => {
         setWantsSync(false);
-        setUrl("");
+        setEntry(EMPTY_FIELDS);
+        setShowPassword(false);
         setSaving({ kind: "idle" });
         load();
       })
@@ -193,15 +221,90 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
               {wantsSync && (
                 <div className="fields">
-                  <label className="field">
-                    <span>Dirección</span>
-                    <input
-                      value={url}
-                      onChange={(event) => setUrl(event.target.value)}
-                      placeholder="mongodb://servidor:puerto/?tls=true"
-                      spellCheck={false}
-                    />
-                  </label>
+                  <div className="row tabs">
+                    <button
+                      type="button"
+                      className={`link${entry.kind === "fields" ? " chosen" : ""}`}
+                      onClick={() => setEntry(EMPTY_FIELDS)}
+                    >
+                      Escribir los datos
+                    </button>
+                    <button
+                      type="button"
+                      className={`link${entry.kind === "paste" ? " chosen" : ""}`}
+                      onClick={() => setEntry({ kind: "paste", url: "" })}
+                    >
+                      Pegar la dirección completa
+                    </button>
+                  </div>
+
+                  {entry.kind === "fields" ? (
+                    <>
+                      <label className="field">
+                        <span>Servidor</span>
+                        <input
+                          value={entry.address}
+                          onChange={(event) =>
+                            setEntry({ ...entry, address: event.target.value })
+                          }
+                          placeholder="servidor:10260/?tls=true"
+                          spellCheck={false}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Usuario</span>
+                        <input
+                          value={entry.user}
+                          onChange={(event) =>
+                            setEntry({ ...entry, user: event.target.value })
+                          }
+                          spellCheck={false}
+                          autoComplete="off"
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Contraseña</span>
+                        <input
+                          type={showPassword ? "text" : "password"}
+                          value={entry.password}
+                          onChange={(event) =>
+                            setEntry({ ...entry, password: event.target.value })
+                          }
+                          spellCheck={false}
+                          autoComplete="off"
+                        />
+                      </label>
+                      <p className="detail">
+                        Escrita acá, una contraseña con{" "}
+                        <code>@</code>, <code>:</code>, <code>/</code> o{" "}
+                        <code>%</code> funciona. Metida a mano dentro de la
+                        dirección, no.
+                      </p>
+                    </>
+                  ) : (
+                    <label className="field">
+                      <span>Dirección</span>
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        value={entry.url}
+                        onChange={(event) =>
+                          setEntry({ kind: "paste", url: event.target.value })
+                        }
+                        placeholder="mongodb://usuario:contraseña@servidor:10260/?tls=true"
+                        spellCheck={false}
+                        autoComplete="off"
+                      />
+                    </label>
+                  )}
+
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => setShowPassword(!showPassword)}
+                  >
+                    {showPassword ? "Ocultar" : "Mostrar"} la contraseña
+                  </button>
+
                   <label className="field">
                     <span>Base de datos</span>
                     <input
@@ -226,7 +329,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                       </button>
                     )}
                   </div>
-
                 </div>
               )}
 

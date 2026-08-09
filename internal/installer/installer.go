@@ -73,6 +73,9 @@ type Deps struct {
 	Extracted func(dir string) bool
 	// Call runs the bundled service CLI from the extracted tree.
 	Call func(ctx context.Context, appDir string, args ...string) (servicecli.Reply, error)
+	// CallWithSecret is Call for the one command that carries a credential,
+	// which reaches the CLI on stdin instead of in its arguments.
+	CallWithSecret func(ctx context.Context, appDir string, secret string, args ...string) (servicecli.Reply, error)
 	// WaitHealthy blocks until the backend on that port answers, or the context ends.
 	WaitHealthy func(ctx context.Context, port int) error
 }
@@ -87,14 +90,21 @@ func Production(dataDir string) Deps {
 		Extract:   payload.Extract,
 		Extracted: payload.ExtractedAt,
 		Call: func(ctx context.Context, appDir string, args ...string) (servicecli.Reply, error) {
-			return servicecli.Client{
-				BunPath:    filepath.Join(appDir, interpreter()),
-				ScriptPath: filepath.Join(appDir, "service.js"),
-			}.Call(ctx, args...)
+			return clientIn(appDir).Call(ctx, args...)
+		},
+		CallWithSecret: func(ctx context.Context, appDir string, secret string, args ...string) (servicecli.Reply, error) {
+			return clientIn(appDir).CallWithSecret(ctx, secret, args...)
 		},
 		WaitHealthy: func(ctx context.Context, port int) error {
 			return waitHealthy(ctx, client, port)
 		},
+	}
+}
+
+func clientIn(appDir string) servicecli.Client {
+	return servicecli.Client{
+		BunPath:    filepath.Join(appDir, interpreter()),
+		ScriptPath: filepath.Join(appDir, "service.js"),
 	}
 }
 

@@ -139,6 +139,19 @@
   text-decoration: underline;
 }
 
+/* Which way the connection is being typed. Underlined rather than boxed: it is
+   a choice between two forms of the same thing, not two different actions. */
+.tabs {
+  gap: 1rem;
+  margin-bottom: 0.2rem;
+}
+
+.tabs .chosen {
+  color: #e8e8ea;
+  text-decoration: underline;
+  text-underline-offset: 0.25rem;
+}
+
 .steps {
   margin: 0.2rem 0 0;
   padding-left: 1.2rem;
