@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "manga-tracker-desktop",
+  "outputfilename": "Manga Tracker",
+  "frontend:install": "bun install",
+  "frontend:build": "bun run build",
+  "frontend:dev:watcher": "bun run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Gastón Lara P.",
+    "email": "292613514+gastonlarap-a11y@users.noreply.github.com"
+  }
+}

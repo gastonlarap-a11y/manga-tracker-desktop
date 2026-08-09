@@ -1,0 +1,8 @@
+build/bin
+node_modules
+frontend/dist
+
+# Wails writes this to detect frontend dependency changes.
+frontend/package.json.md5
+
+.DS_Store
