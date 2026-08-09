@@ -3,8 +3,9 @@
 Desktop app (Wails v2, Go + React) that makes the local-first manga tracker installable by
 someone who does not program. One download, and the browser extension is one click away.
 
-**Current state: scaffold.** The Wails project builds on macOS and Windows; the three
-responsibilities below are being implemented. Do not describe them here as done.
+**Current state.** The window works: it finds the backend on this machine and shows the
+dashboard it serves. The installer and the settings screen are not written yet — do not
+describe them here as done.
 
 Sibling repos, consumed but never merged into this one:
 - `../manga-tracker-api` — the backend. Runs as a **system service**, not as a child of this
@@ -31,7 +32,10 @@ working. It is a control panel, not a runtime.
 
 ## Layout
 - `main.go` — Wails entry point: window options, embedded assets, bindings
-- `app.go` — the bound struct; methods here are callable from the frontend
+- `app.go` — the bound struct; methods here are callable from the frontend. Wiring only:
+  anything worth testing lives under `internal/`
+- `internal/backend/` — finds the running backend (`GET /health` over 5150-5159, matching on
+  `service`). Pure Go with no Wails import, so `go test` reaches it
 - `frontend/` — React 19 + Vite 8 + TypeScript 7 (same stack as the dashboard), built with
   **Bun**; `wails.json` points `frontend:install`/`frontend:build` at it
 - `frontend/wailsjs/` — generated bindings (`wails build`/`wails dev` regenerate them)

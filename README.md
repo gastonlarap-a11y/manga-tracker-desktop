@@ -7,8 +7,8 @@ extension in developer mode. That is not something you can hand to a friend.
 
 This app replaces all of it with **one download**.
 
-> **Status: scaffold.** The Wails project builds on macOS and Windows. The installer, the
-> dashboard window and the settings screen are being implemented — see `AGENTS.md`.
+> **Status.** The window works: it finds the backend running on this machine and shows the
+> dashboard. The installer and the settings screen are not written yet — see `AGENTS.md`.
 
 ## How the pieces fit
 
@@ -23,6 +23,17 @@ The backend is **not** a child process of this app. If it were, closing the app 
 tracking — and the app is closed exactly when someone is reading. So it runs on its own, and
 this app is a control panel over it: it can be closed, or never opened, and readings keep
 being recorded.
+
+## Finding the backend
+
+The app does not assume a port. It probes `GET /health` on **5150-5159** and takes the first
+that identifies itself as `manga-tracker-api`, which is what lets an installer pick whatever
+port is free on that machine. The browser extension probes the same range, so widening it
+means widening it in both places.
+
+The dashboard is then shown in a frame pointing at that backend, rather than bundled into
+this app. Two things follow: the dashboard is same-origin with its own API (no CORS
+involved), and a dashboard update reaches the window without rebuilding this app.
 
 ## Requirements
 
