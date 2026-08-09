@@ -111,8 +111,8 @@ func extractFS(source fs.FS, root, dir, version string) error {
 		return nil
 	}
 	// A previous version, or the remains of an interrupted extraction.
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("could not clear %s: %w", dir, err)
+	if err := clearForRewrite(dir); err != nil {
+		return err
 	}
 
 	err := fs.WalkDir(source, root, func(path string, entry fs.DirEntry, err error) error {
@@ -137,6 +137,40 @@ func extractFS(source fs.FS, root, dir, version string) error {
 	}
 
 	return os.WriteFile(filepath.Join(dir, versionMarker), []byte(version), 0o644)
+}
+
+// retiredSuffix names the old tree while it is on its way out. A fixed name
+// rather than a timestamped one: at most one can be pending, and the next
+// launch has to be able to find and finish removing it.
+const retiredSuffix = ".old"
+
+// clearForRewrite empties the payload directory so a new version can be written
+// into it.
+//
+// Deleting it is the normal path. Windows refuses to delete a directory holding
+// a running executable, and updating is exactly the moment when one is running:
+// the backend is a service started at login, and it runs `bun.exe` out of this
+// very tree. Windows does allow *renaming* it, though, which frees the path
+// immediately — the running process keeps the files it already opened, and what
+// is left behind is removed on a later launch, once nothing is using it.
+//
+// Without this an update on Windows fails on the first file it tries to unlink,
+// leaving the machine on the old version with no way to move forward short of
+// uninstalling.
+func clearForRewrite(dir string) error {
+	// A rename from a previous update that could not be cleaned up yet. Best
+	// effort: if it is still in use, the retirement below is what matters.
+	retired := dir + retiredSuffix
+	_ = os.RemoveAll(retired)
+
+	err := os.RemoveAll(dir)
+	if err == nil {
+		return nil
+	}
+	if renameErr := os.Rename(dir, retired); renameErr != nil {
+		return fmt.Errorf("could not clear %s: %w", dir, err)
+	}
+	return nil
 }
 
 func markerAt(dir string) string {

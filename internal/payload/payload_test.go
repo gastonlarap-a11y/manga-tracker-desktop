@@ -172,6 +172,65 @@ func TestExtractReplacesAnOlderVersion(t *testing.T) {
 	}
 }
 
+func TestUpgradeSurvivesADirectoryThatCannotBeDeleted(t *testing.T) {
+	// The Windows update case, reproduced with permissions because that is the
+	// portable way to make a deletion fail: Windows will not unlink a running
+	// executable, and on an update the backend is running out of this very
+	// tree. Renaming it is allowed there, and frees the path.
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows ignores POSIX permissions; the case it stands for is its own")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root deletes regardless of permissions")
+	}
+	dir := t.TempDir()
+	if err := extractFS(fakePayload("v1"), "dist", dir, "v1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	locked := filepath.Join(dir, "app")
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// It ends up under the retired copy, and Go's own TempDir cleanup cannot
+	// remove a directory it is not allowed to write to either.
+	t.Cleanup(func() {
+		_ = os.Chmod(locked, 0o755)
+		_ = os.Chmod(filepath.Join(dir+retiredSuffix, "app"), 0o755)
+	})
+
+	if err := extractFS(fakePayload("v2"), "dist", dir, "v2"); err != nil {
+		t.Fatalf("the upgrade should have moved the old tree aside: %v", err)
+	}
+
+	if markerAt(dir) != "v2" {
+		t.Errorf("expected the marker to read v2, got %q", markerAt(dir))
+	}
+	if _, err := os.Stat(filepath.Join(dir, "app", "index.js")); err != nil {
+		t.Errorf("the new version was not written: %v", err)
+	}
+	if _, err := os.Stat(dir + retiredSuffix); err != nil {
+		t.Errorf("the old tree should have been retired beside it: %v", err)
+	}
+}
+
+func TestARetiredTreeIsClearedOnTheNextUpgrade(t *testing.T) {
+	// Whatever could not be deleted while it was in use is deleted later, so a
+	// machine does not accumulate one copy of the backend per release.
+	dir := t.TempDir()
+	retired := dir + retiredSuffix
+	if err := os.MkdirAll(filepath.Join(retired, "app"), 0o755); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := extractFS(fakePayload("v1"), "dist", dir, "v1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(retired); !errors.Is(err, fs.ErrNotExist) {
+		t.Error("the retired tree from a previous upgrade was not cleared")
+	}
+}
+
 func TestAnInterruptedExtractionIsNotTrusted(t *testing.T) {
 	// The marker is written last, so a tree without one is re-extracted rather
 	// than used half-written.
