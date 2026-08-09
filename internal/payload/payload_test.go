@@ -15,12 +15,13 @@ import (
 // the first time on someone's computer.
 func fakePayload(version string) fstest.MapFS {
 	return fstest.MapFS{
-		"dist/VERSION":                     {Data: []byte(version + "\n")},
-		"dist/backend/index.js":            {Data: []byte("// server")},
-		"dist/backend/service.js":          {Data: []byte("// cli")},
-		"dist/backend/migrations/1/up.sql": {Data: []byte("CREATE TABLE t(id);")},
-		"dist/backend/public/index.html":   {Data: []byte("<title>Manga Tracker</title>")},
-		"dist/runtime/bun":                 {Data: []byte("ELF")},
+		"dist/VERSION":                 {Data: []byte(version + "\n")},
+		"dist/app/bun":                 {Data: []byte("ELF")},
+		"dist/app/index.js":            {Data: []byte("// server")},
+		"dist/app/service.js":          {Data: []byte("// cli")},
+		"dist/app/migrations/1/up.sql": {Data: []byte("CREATE TABLE t(id);")},
+		"dist/app/public/index.html":   {Data: []byte("<title>Manga Tracker</title>")},
+		"dist/extension/manifest.json": {Data: []byte(`{"name":"Manga Tracker"}`)},
 	}
 }
 
@@ -46,11 +47,12 @@ func TestExtractWritesTheWholeTree(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"backend/index.js",
-		"backend/service.js",
-		"backend/migrations/1/up.sql",
-		"backend/public/index.html",
-		"runtime/bun",
+		"app/bun",
+		"app/index.js",
+		"app/service.js",
+		"app/migrations/1/up.sql",
+		"app/public/index.html",
+		"extension/manifest.json",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
 			t.Errorf("%s was not extracted: %v", want, err)
@@ -70,7 +72,7 @@ func TestExtractMakesTheInterpreterExecutable(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	info, err := os.Stat(filepath.Join(dir, "runtime", "bun"))
+	info, err := os.Stat(filepath.Join(dir, "app", "bun"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,7 +80,7 @@ func TestExtractMakesTheInterpreterExecutable(t *testing.T) {
 		t.Errorf("bun is not executable: %v", info.Mode().Perm())
 	}
 	// And nothing else is, so the payload does not hand out execute bits.
-	server, err := os.Stat(filepath.Join(dir, "backend", "index.js"))
+	server, err := os.Stat(filepath.Join(dir, "app", "index.js"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,7 +96,7 @@ func TestExtractSkipsWorkWhenTheVersionMatches(t *testing.T) {
 	}
 	// A file the payload does not contain: it survives only if the second run
 	// did nothing.
-	sentinel := filepath.Join(dir, "backend", "touched")
+	sentinel := filepath.Join(dir, "app", "touched")
 	if err := os.WriteFile(sentinel, []byte("x"), 0o644); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -113,7 +115,7 @@ func TestExtractReplacesAnOlderVersion(t *testing.T) {
 	if err := extractFS(fakePayload("v1"), "dist", dir, "v1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	stale := filepath.Join(dir, "backend", "removed-in-v2.js")
+	stale := filepath.Join(dir, "app", "removed-in-v2.js")
 	if err := os.WriteFile(stale, []byte("x"), 0o644); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -148,10 +150,10 @@ func TestAnInterruptedExtractionIsNotTrusted(t *testing.T) {
 }
 
 func TestIsExecutableOnlyMatchesTheInterpreter(t *testing.T) {
-	if !IsExecutable("dist/runtime/bun") || !IsExecutable("dist/runtime/bun.exe") {
+	if !IsExecutable("dist/app/bun") || !IsExecutable("dist/app/bun.exe") {
 		t.Error("the interpreter must be marked executable")
 	}
-	if IsExecutable("dist/backend/index.js") || IsExecutable("dist/backend/public/bundle.js") {
+	if IsExecutable("dist/app/index.js") || IsExecutable("dist/app/public/bundle.js") {
 		t.Error("nothing but the interpreter should be executable")
 	}
 }

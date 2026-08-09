@@ -44,6 +44,30 @@
   background: #2c3444;
 }
 
+/* One primary action per screen: the button that does the thing you came for. */
+.primary {
+  background: #4f46e5;
+  border-color: #5b52e8;
+  padding: 8px 18px;
+  font-size: 0.95rem;
+  margin-top: 4px;
+}
+
+.primary:hover {
+  background: #5b52e8;
+}
+
+/* An error from the service, shown verbatim: it is the only text that says
+   what actually failed, and paraphrasing it would lose the detail. */
+.reason {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: #d98b8b;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .body {
   flex: 1;
   display: flex;

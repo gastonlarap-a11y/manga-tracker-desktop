@@ -29,10 +29,18 @@ var dist embed.FS
 
 const (
 	// The file whose presence means a real payload was built in.
-	backendEntry = "dist/backend/index.js"
+	backendEntry = "dist/app/index.js"
 	// Written next to the extracted tree so a second launch is a string
 	// comparison instead of tens of thousands of file writes.
 	versionMarker = ".payload-version"
+
+	// AppSubdir is where the backend lands once extracted, and is what the
+	// service CLI is given as --app-dir. Flat on purpose: the CLI looks for the
+	// interpreter at <app-dir>/bun and runs index.js from there.
+	AppSubdir = "app"
+	// ExtensionSubdir holds the MV3 build, for loading unpacked while the
+	// store review is pending.
+	ExtensionSubdir = "extension"
 )
 
 // Version identifies what is embedded — a release tag, or "dev".
