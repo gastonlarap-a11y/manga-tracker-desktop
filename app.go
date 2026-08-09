@@ -47,8 +47,9 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	// The service control ships inside the payload, so it has to be on disk
 	// before anything asks it a question — including the settings screen, which
-	// otherwise reports every answer as "not installed".
-	if err := a.deps.Prepare(); err != nil && a.setupErr == "" {
+	// otherwise reports every answer as "not installed". This is also where an
+	// app installed over an older one moves its backend to the new version.
+	if err := a.deps.Prepare(ctx); err != nil && a.setupErr == "" {
 		a.setupErr = err.Error()
 	}
 }

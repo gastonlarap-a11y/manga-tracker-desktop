@@ -20,6 +20,15 @@ type recorder struct {
 	waited    []int
 	// What `status` answers. Zero value: nothing installed yet.
 	status servicecli.Reply
+	// Whether the tree on disk is already this build's version. Zero value: it
+	// is not, which is both a first install and an update.
+	upToDate bool
+	// A verb the service control refuses, so a test can describe an older
+	// payload whose CLI does not know it.
+	failVerb string
+	// Extractions and commands in one sequence, because the update path is
+	// about their order relative to each other.
+	steps []string
 }
 
 func newRecorder(found string, available bool, reply servicecli.Reply, callErr error) *recorder {
@@ -30,14 +39,24 @@ func newRecorder(found string, available bool, reply servicecli.Reply, callErr e
 		Available: func() bool { return available },
 		Extract: func(dir string) error {
 			r.extracted = append(r.extracted, dir)
+			r.steps = append(r.steps, "extract")
 			return nil
 		},
+		Extracted: func(string) bool { return r.upToDate },
 		Call: func(_ context.Context, appDir string, args ...string) (servicecli.Reply, error) {
 			r.commands = append(r.commands, append([]string{appDir}, args...))
+			verb := ""
+			if len(args) > 0 {
+				verb = args[0]
+				r.steps = append(r.steps, verb)
+			}
+			if verb == r.failVerb {
+				return servicecli.Reply{}, errors.New("unknown command")
+			}
 			// `status` is asked before installing, to catch a service that is
 			// registered but stopped. Answered separately so a test can
 			// describe a machine that already has one.
-			if len(args) > 0 && args[0] == "status" {
+			if verb == "status" {
 				return r.status, nil
 			}
 			return reply, callErr
@@ -221,6 +240,95 @@ func TestInstallDoesNothingWithoutAPayload(t *testing.T) {
 	}
 	if len(r.extracted) != 0 {
 		t.Error("nothing may be extracted when there is no payload")
+	}
+}
+
+func TestPrepareDoesNothingWhenTheTreeIsAlreadyThisVersion(t *testing.T) {
+	// Every launch calls this. Rewriting tens of thousands of files each time,
+	// or bouncing a healthy service, would be a strange thing to do at startup.
+	r := newRecorder("", true, installed(), nil)
+	r.upToDate = true
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+
+	if err := r.deps.Prepare(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.steps) != 0 {
+		t.Errorf("expected an untouched machine, got %v", r.steps)
+	}
+}
+
+func TestPrepareOnAFirstInstallOnlyExtracts(t *testing.T) {
+	// No service yet: there is nothing to stop, and starting one is Install's
+	// job — the person has not asked for it.
+	r := newRecorder("", true, installed(), nil)
+
+	if err := r.deps.Prepare(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := []string{"status", "extract"}; strings.Join(r.steps, ",") != strings.Join(want, ",") {
+		t.Errorf("expected %v, got %v", want, r.steps)
+	}
+}
+
+func TestPrepareStopsTheServiceBeforeReplacingItsFiles(t *testing.T) {
+	// The service runs out of the tree being replaced. On Windows its open
+	// files block the replacement outright; on both systems it would otherwise
+	// go on executing the old code.
+	r := newRecorder("", true, installed(), nil)
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+
+	if err := r.deps.Prepare(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The whole point is the order: stopped, then written, then started.
+	want := []string{"status", "stop", "extract", "restart"}
+	if strings.Join(r.steps, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected %v, got %v", want, r.steps)
+	}
+}
+
+func TestPrepareUpdatesEvenWhenTheOldVersionCannotStopItself(t *testing.T) {
+	// A payload shipped before `stop` existed answers "unknown command".
+	// Refusing to update then would strand exactly the people an update is for,
+	// and the extraction is written to cope with a tree still in use.
+	r := newRecorder("", true, installed(), nil)
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+	r.failVerb = "stop"
+
+	if err := r.deps.Prepare(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.extracted) != 1 {
+		t.Errorf("expected the update to go through anyway, got %v", r.extracted)
+	}
+}
+
+func TestPrepareSaysSoWhenTheBackendDoesNotComeBack(t *testing.T) {
+	// Written but not running is the one outcome nobody can see for themselves:
+	// the app opens on a library that is simply not there.
+	r := newRecorder("", true, installed(), nil)
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+	r.failVerb = "restart"
+
+	err := r.deps.Prepare(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "did not come back") {
+		t.Fatalf("expected the restart failure to be reported, got %v", err)
+	}
+}
+
+func TestPrepareDoesNothingWithoutAPayload(t *testing.T) {
+	// A development build carries no backend. Not a fault, and not something to
+	// report at startup.
+	r := newRecorder("", false, installed(), nil)
+
+	if err := r.deps.Prepare(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.steps) != 0 {
+		t.Errorf("expected nothing to happen, got %v", r.steps)
 	}
 }
 

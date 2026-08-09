@@ -67,6 +67,10 @@ type Deps struct {
 	Discover  func(ctx context.Context) string
 	Available func() bool
 	Extract   func(dir string) error
+	// Extracted reports whether the tree on disk is already this build's
+	// version. Injected alongside Extract so the update path — which is the
+	// part with an order to get wrong — is testable without a payload.
+	Extracted func(dir string) bool
 	// Call runs the bundled service CLI from the extracted tree.
 	Call func(ctx context.Context, appDir string, args ...string) (servicecli.Reply, error)
 	// WaitHealthy blocks until the backend on that port answers, or the context ends.
@@ -81,6 +85,7 @@ func Production(dataDir string) Deps {
 		Discover:  func(ctx context.Context) string { return backend.Discover(ctx, client) },
 		Available: payload.Available,
 		Extract:   payload.Extract,
+		Extracted: payload.ExtractedAt,
 		Call: func(ctx context.Context, appDir string, args ...string) (servicecli.Reply, error) {
 			return servicecli.Client{
 				BunPath:    filepath.Join(appDir, interpreter()),
@@ -115,18 +120,56 @@ func (d Deps) ExtensionDir() string {
 	return filepath.Join(payload.RuntimeDir(d.DataDir), payload.ExtensionSubdir)
 }
 
-// Prepare writes the payload out if this build carries one.
+// Prepare brings the tree on disk up to the version this build carries.
 //
-// Called at startup rather than only from Install, because the service control
-// lives inside the payload: until it is on disk, nothing can ask the machine
-// whether a service is installed, and the settings screen showed every question
-// as "not installed". Idempotent and quick — 132 ms the first time, microseconds
-// afterwards.
-func (d Deps) Prepare() error {
-	if !d.Available() {
+// Called at startup rather than only from Install, for two reasons. The service
+// control lives inside the payload, so until it is on disk nothing can ask the
+// machine whether a service is installed — the settings screen answered every
+// question with "not installed". And this is where an update lands: someone
+// installs a newer app over the old one, and the backend beside it has to move
+// with it.
+//
+// Idempotent and quick when there is nothing to do — 132 ms the first time,
+// microseconds afterwards.
+//
+// The order matters. A service started at login is running out of the very tree
+// about to be replaced, so it is stopped first: on Windows its open files would
+// block the replacement outright, and on both systems it would otherwise keep
+// executing the old code until the next login. It is started again immediately
+// after, because someone who just opened the app expects their library, not a
+// gap until they next log in.
+func (d Deps) Prepare(ctx context.Context) error {
+	if !d.Available() || d.Extracted(d.DataDir) {
 		return nil
 	}
-	return d.Extract(d.DataDir)
+
+	// Whether this is a first install or an update is not something to guess at
+	// from the version marker: a machine can have a service registered and no
+	// tree at all, if the data directory was cleared by hand.
+	serviceInstalled := false
+	if status, err := d.Call(ctx, d.AppDir(), "status"); err == nil && status.Installed {
+		serviceInstalled = true
+		// The CLI being asked here is the *old* payload's, and one shipped
+		// before this command existed answers "unknown command". Ignored on
+		// purpose: extraction copes with a tree still in use, and refusing to
+		// update because the previous version could not stop itself would
+		// strand exactly the people an update is for.
+		_, _ = d.Call(ctx, d.AppDir(), "stop")
+	}
+
+	if err := d.Extract(d.DataDir); err != nil {
+		return err
+	}
+	if !serviceInstalled {
+		return nil
+	}
+
+	// Restarting reads the new tree — and the service definition still points
+	// at the same path, so nothing has to be re-registered.
+	if _, err := d.Call(ctx, d.AppDir(), "restart"); err != nil {
+		return fmt.Errorf("the update was written but the backend did not come back: %w", err)
+	}
+	return nil
 }
 
 // Look reports what the app should offer.
