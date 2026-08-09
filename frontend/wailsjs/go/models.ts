@@ -1,21 +1,37 @@
-export namespace main {
+export namespace installer {
 	
-	export class BackendStatus {
-	    found: boolean;
+	export class Result {
 	    baseUrl: string;
-	    firstPort: number;
-	    lastPort: number;
+	    port: number;
+	    dataDir: string;
+	    userCanControlIt: boolean;
 	
 	    static createFrom(source: any = {}) {
-	        return new BackendStatus(source);
+	        return new Result(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.found = source["found"];
 	        this.baseUrl = source["baseUrl"];
-	        this.firstPort = source["firstPort"];
-	        this.lastPort = source["lastPort"];
+	        this.port = source["port"];
+	        this.dataDir = source["dataDir"];
+	        this.userCanControlIt = source["userCanControlIt"];
+	    }
+	}
+	export class State {
+	    kind: string;
+	    baseUrl: string;
+	    version: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new State(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.kind = source["kind"];
+	        this.baseUrl = source["baseUrl"];
+	        this.version = source["version"];
 	    }
 	}
 

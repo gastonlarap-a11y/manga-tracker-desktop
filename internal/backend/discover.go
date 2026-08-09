@@ -100,6 +100,16 @@ func Discover(ctx context.Context, client *http.Client) string {
 	return discoverIn(ctx, client, Ports())
 }
 
+// DiscoverPort asks one specific port, and insists on the service name.
+//
+// Used after an install, where the port is known and the backend behind it is
+// the one that was just written out — so it always carries the name, and
+// accepting a nameless 200 would only mean accepting whatever else grabbed the
+// port in between.
+func DiscoverPort(ctx context.Context, client *http.Client, port int) bool {
+	return probe(ctx, client, port, true)
+}
+
 // discoverIn takes the candidates as a parameter so a test can pin them to the
 // ports it actually bound, instead of inheriting the machine it runs on.
 //

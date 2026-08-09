@@ -36,6 +36,12 @@ working. It is a control panel, not a runtime.
   anything worth testing lives under `internal/`
 - `internal/backend/` — finds the running backend (`GET /health` over 5150-5159, matching on
   `service`). Pure Go with no Wails import, so `go test` reaches it
+- `internal/servicecli/` — spawns the backend's bundled `service.js` and reads its JSON.
+  Registering a launchd agent or a Windows task correctly is already written and tested in
+  `manga-tracker-api/deploy/lib`; this calls it rather than reimplementing it in Go
+- `internal/payload/` — the backend, a Bun and the extension build, embedded with `go:embed`
+  and extracted on first launch. `dist/` holds only `VERSION` in git: a development build
+  carries nothing, `Available()` says so, and `wails dev` keeps working
 - `frontend/` — React 19 + Vite 8 + TypeScript 7 (same stack as the dashboard), built with
   **Bun**; `wails.json` points `frontend:install`/`frontend:build` at it
 - `frontend/wailsjs/` — generated bindings (`wails build`/`wails dev` regenerate them)
@@ -63,6 +69,11 @@ working. It is a control panel, not a runtime.
   environment. Widening the range means changing it in the extension too.
 - The extension's Web Store URL is **configuration, not code**, so the day Google approves
   it the app switches to one-click installation without shipping a new version.
+- **`go:embed` does not keep permissions.** Everything comes back read-only, so the extracted
+  Bun is chmod'ed explicitly — without it the install fails with "permission denied" on a file
+  that is plainly there.
+- The payload's version marker is written **last**. A run that dies halfway leaves none, so
+  the next launch extracts again instead of trusting a half-written tree.
 
 ## Engineering standards
 - Every feature ships with its tests. `go vet` + `go test` + the frontend build must pass on
