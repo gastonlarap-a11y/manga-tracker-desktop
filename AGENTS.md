@@ -45,7 +45,14 @@ working. It is a control panel, not a runtime.
 - `frontend/` — React 19 + Vite 8 + TypeScript 7 (same stack as the dashboard), built with
   **Bun**; `wails.json` points `frontend:install`/`frontend:build` at it
 - `frontend/wailsjs/` — generated bindings (`wails build`/`wails dev` regenerate them)
+- `internal/browsers/` — which Chromium browsers are installed, and opening **one specific
+  one**: someone whose default is Safari still wants the extension in Brave
+- `internal/syncurl/` — refuses a connection string that cannot work, returning a code the
+  window turns into a sentence
 - `build/` — icons and platform packaging metadata; `build/bin/` is the output (gitignored)
+- `sources.json` — the commits of the sibling repos a release bundles, and the Bun version.
+  Pinned to commits, not `main`: a tag has to be rebuildable, and a broken commit landing in a
+  sibling repo must not silently ship
 
 ## Commands
 - Dev: `wails dev` · Build: `wails build`
@@ -74,6 +81,11 @@ working. It is a control panel, not a runtime.
   that is plainly there.
 - The payload's version marker is written **last**. A run that dies halfway leaves none, so
   the next launch extracts again instead of trusting a half-written tree.
+- **User-facing reasons cross the Go boundary as codes, never as sentences.** Every word
+  someone reads is written in `frontend/src`, in one language. A Go error string that reaches
+  the screen is technical detail under a sentence the window wrote, not the message itself.
+- Measured, so nobody has to guess: the real payload is **80 MB, 485 files, extracted in
+  ~130 ms**, and a second launch skips it in microseconds. The app binary is ~96 MB.
 
 ## Engineering standards
 - Every feature ships with its tests. `go vet` + `go test` + the frontend build must pass on

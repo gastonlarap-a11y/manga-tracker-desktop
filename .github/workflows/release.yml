@@ -1,0 +1,216 @@
+# Builds the thing people actually download.
+#
+# Everything that ships is assembled here: the backend and its migrations, the
+# dashboard build, the browser extension for loading unpacked while the store
+# review is pending, and a Bun to run all of it. That tree is embedded in the
+# app binary and extracted on first launch.
+#
+# The sibling repositories are checked out at the commits pinned in
+# sources.json, not at main. A release has to be rebuildable, and a broken
+# commit landing in a sibling repo must not silently ship.
+#
+# macOS is Apple Silicon only, deliberately: the libSQL driver is per
+# architecture and building both would double what has to be verified for a
+# machine nobody involved owns. It is stated in the release notes rather than
+# discovered on someone's old Mac.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Buildable without publishing, to check the pipeline before cutting a tag.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: Manga-Tracker-macOS-AppleSilicon.dmg
+          - os: windows-latest
+            artifact: Manga-Tracker-Windows-Setup.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read the pinned sources
+        id: sources
+        run: |
+          set -euo pipefail
+          for key in api dashboard extension; do
+            repo=$(jq -r ".${key}.repository" sources.json)
+            commit=$(jq -r ".${key}.commit" sources.json)
+            echo "${key}_repo=${repo}" >> "$GITHUB_OUTPUT"
+            echo "${key}_commit=${commit}" >> "$GITHUB_OUTPUT"
+            echo "${key}: ${repo}@${commit}"
+          done
+          echo "bun=$(jq -r '.bun.version' sources.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ steps.sources.outputs.api_repo }}
+          ref: ${{ steps.sources.outputs.api_commit }}
+          path: sources/api
+
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ steps.sources.outputs.dashboard_repo }}
+          ref: ${{ steps.sources.outputs.dashboard_commit }}
+          path: sources/dashboard
+
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ steps.sources.outputs.extension_repo }}
+          ref: ${{ steps.sources.outputs.extension_commit }}
+          path: sources/extension
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ steps.sources.outputs.bun }}
+
+      - name: Build the dashboard
+        working-directory: sources/dashboard
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Build the extension
+        working-directory: sources/extension
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Assemble the backend, dashboard included
+        working-directory: sources/api
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          # Generated into src/generated and gitignored; it gets bundled in, so
+          # the target machine never runs the Prisma CLI.
+          DATABASE_URL="file:./build.db" bun run db:generate
+          # The same script the smoke test uses, so what CI proves and what
+          # people download are assembled by the same code.
+          bun run package -- --out "${GITHUB_WORKSPACE}/internal/payload/dist/app" \
+            --dashboard "${GITHUB_WORKSPACE}/sources/dashboard/dist"
+
+      - name: Add the extension, for loading unpacked
+        run: cp -R sources/extension/.output/chrome-mv3 internal/payload/dist/extension
+
+      # Downloaded rather than copied from the runner's own Bun: what ships has
+      # to be the pinned version regardless of what the action installed.
+      - name: Add the Bun that will run it
+        run: |
+          set -euo pipefail
+          version="${{ steps.sources.outputs.bun }}"
+          case "${{ matrix.os }}" in
+            macos-latest)   target="bun-darwin-aarch64" ; binary="bun" ;;
+            windows-latest) target="bun-windows-x64"    ; binary="bun.exe" ;;
+          esac
+          curl -fsSL -o bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v${version}/${target}.zip"
+          unzip -q bun.zip
+          mv "${target}/${binary}" "internal/payload/dist/app/${binary}"
+          chmod +x "internal/payload/dist/app/${binary}" || true
+          "internal/payload/dist/app/${binary}" --version
+
+      - name: Stamp the version
+        run: echo "${GITHUB_REF_NAME:-dev-$(git rev-parse --short HEAD)}" > internal/payload/dist/VERSION
+
+      - name: Verify no personal infrastructure is in the payload
+        run: |
+          set -euo pipefail
+          if grep -rIl "kv-mangatracker\|rg-proyectos-personales" internal/payload/dist 2>/dev/null; then
+            echo "::error::Azure resource names ended up in the payload"
+            exit 1
+          fi
+          echo "clean: nothing personal in what ships"
+
+      - name: Confirm the payload is complete
+        run: |
+          set -euo pipefail
+          # Cheaper to fail here than to ship an app whose install dies on a
+          # missing file. index.js is what payload.Available() looks for.
+          for required in \
+            internal/payload/dist/app/index.js \
+            internal/payload/dist/app/service.js \
+            internal/payload/dist/app/migrations \
+            internal/payload/dist/app/public/index.html \
+            internal/payload/dist/extension/manifest.json ; do
+            test -e "$required" || { echo "::error::missing $required"; exit 1; }
+          done
+          du -sh internal/payload/dist
+
+      - name: Install the Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Build the app (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -euo pipefail
+          wails build -platform darwin/arm64 -trimpath
+          # Not notarised — that needs a paid Apple account — but ad-hoc signed,
+          # which is what keeps Apple Silicon from refusing it outright as
+          # damaged. Gatekeeper still asks once; the README says how.
+          codesign --force --deep --sign - "build/bin/manga-tracker-desktop.app"
+          hdiutil create -volname "Manga Tracker" \
+            -srcfolder "build/bin/manga-tracker-desktop.app" \
+            -ov -format UDZO "${{ matrix.artifact }}"
+
+      - name: Build the app (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          set -euo pipefail
+          wails build -platform windows/amd64 -nsis -trimpath
+          installer=$(find build/bin -name "*.exe" -not -name "manga-tracker-desktop.exe" | head -1)
+          test -n "$installer"
+          cp "$installer" "${{ matrix.artifact }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            ## Instalación
+
+            **macOS** (Apple Silicon — M1 en adelante): abrí el `.dmg` y arrastrá
+            la app a Aplicaciones. La primera vez macOS va a avisar que no
+            reconoce al desarrollador: Ajustes del Sistema → Privacidad y
+            seguridad → **Abrir de todos modos**. Una sola vez.
+
+            **Windows**: ejecutá el instalador. SmartScreen va a avisar lo mismo:
+            **Más información** → **Ejecutar de todas formas**.
+
+            No están firmados con un certificado de pago porque son de cobro
+            anual y esto es un proyecto personal.
+
+            Al abrirla, la app instala el servidor y lo deja arrancando solo en
+            cada inicio de sesión. Después, desde el engranaje, la extensión del
+            navegador.

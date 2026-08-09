@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Install, Look } from "../wailsjs/go/main/App";
+import { SettingsDialog } from "./Settings";
 import "./App.css";
 
 /**
@@ -17,6 +18,7 @@ type View =
 
 function App() {
   const [view, setView] = useState<View>({ kind: "looking" });
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const look = useCallback(() => {
     setView({ kind: "looking" });
@@ -52,7 +54,26 @@ function App() {
         <button type="button" className="action" onClick={look}>
           Reconectar
         </button>
+        <button
+          type="button"
+          className="gear"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Configuración"
+          title="Configuración"
+        >
+          ⚙
+        </button>
       </header>
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => {
+            setSettingsOpen(false);
+            // Installing the extension or turning sync on changes what the
+            // dashboard shows, so the window catches up on close.
+            look();
+          }}
+        />
+      )}
       <main className="body">
         {view.kind === "looking" && (
           <p className="message">Buscando Manga Tracker en tu computadora…</p>
