@@ -62,6 +62,24 @@ export namespace main {
 	        this.refused = source["refused"];
 	    }
 	}
+	export class SyncLive {
+	    asked: boolean;
+	    connected: boolean;
+	    lastSyncAt: string;
+	    lastError: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SyncLive(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.asked = source["asked"];
+	        this.connected = source["connected"];
+	        this.lastSyncAt = source["lastSyncAt"];
+	        this.lastError = source["lastError"];
+	    }
+	}
 	export class Settings {
 	    hasPayload: boolean;
 	    asked: boolean;
@@ -72,6 +90,9 @@ export namespace main {
 	    version: string;
 	    syncConfigured: boolean;
 	    hasStoredCredential: boolean;
+	    syncHost: string;
+	    syncDb: string;
+	    syncLive: SyncLive;
 	    browsers: browsers.Browser[];
 	    storeUrl: string;
 	    problem: string;
@@ -91,6 +112,9 @@ export namespace main {
 	        this.version = source["version"];
 	        this.syncConfigured = source["syncConfigured"];
 	        this.hasStoredCredential = source["hasStoredCredential"];
+	        this.syncHost = source["syncHost"];
+	        this.syncDb = source["syncDb"];
+	        this.syncLive = this.convertValues(source["syncLive"], SyncLive);
 	        this.browsers = this.convertValues(source["browsers"], browsers.Browser);
 	        this.storeUrl = source["storeUrl"];
 	        this.problem = source["problem"];
@@ -114,12 +138,15 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 	export class SyncOutcome {
 	    problem: string;
 	    settled: boolean;
 	    connected: boolean;
 	    lastError: string;
 	    usesSrv: boolean;
+	    converted: boolean;
+	    host: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SyncOutcome(source);
@@ -132,6 +159,8 @@ export namespace main {
 	        this.connected = source["connected"];
 	        this.lastError = source["lastError"];
 	        this.usesSrv = source["usesSrv"];
+	        this.converted = source["converted"];
+	        this.host = source["host"];
 	    }
 	}
 

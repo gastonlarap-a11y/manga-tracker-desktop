@@ -5,4 +5,9 @@ frontend/dist
 # Wails writes this to detect frontend dependency changes.
 frontend/package.json.md5
 
+# Derived from build/appicon.png at build time, and deliberately not committed:
+# Wails only regenerates it when it is missing, so a committed copy is one that
+# silently outlives every later change to the artwork.
+build/windows/icon.ico
+
 .DS_Store

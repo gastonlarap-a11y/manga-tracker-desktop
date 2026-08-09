@@ -126,7 +126,32 @@ jobs:
           "internal/payload/dist/app/${binary}" --version
 
       - name: Stamp the version
-        run: echo "${GITHUB_REF_NAME:-dev-$(git rev-parse --short HEAD)}" > internal/payload/dist/VERSION
+        run: |
+          set -euo pipefail
+          ref="${GITHUB_REF_NAME:-dev-$(git rev-parse --short HEAD)}"
+          echo "$ref" > internal/payload/dist/VERSION
+
+          # The bundle's version is a separate channel from the payload's, and
+          # it was never stamped: `wails.json` holds it by hand, so every
+          # release so far announced itself as 0.1.0 in Finder and in Windows'
+          # Properties → Details. Someone looking at the app they installed
+          # could not tell which one it was.
+          #
+          # One edit covers both platforms — Info.plist, info.json and the exe
+          # manifest all interpolate this same field.
+          #
+          # Only for a real tag: on a workflow_dispatch the ref is `main`, and
+          # the Windows manifest builds its version as `<productVersion>.0`.
+          # `main.0` is not a version, and an invalid manifest can stop the
+          # executable from starting at all.
+          if [[ "$ref" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            version="${BASH_REMATCH[1]}"
+          else
+            version="0.0.0"
+          fi
+          jq --arg v "$version" '.info.productVersion = $v' wails.json > wails.stamped.json
+          mv wails.stamped.json wails.json
+          echo "payload: ${ref} · bundle: ${version}"
 
       - name: Verify no personal infrastructure is in the payload
         run: |
@@ -188,6 +213,17 @@ jobs:
         run: |
           set -euo pipefail
           wails build -platform windows/amd64 -nsis -trimpath
+
+          # No icon.ico is committed on purpose: Wails only derives one from
+          # appicon.png when the file is absent, so keeping the old one is how
+          # Windows would go on shipping the stock Wails "W" long after the Mac
+          # stopped. Asserted rather than trusted — this is the one artwork
+          # nobody involved can look at before it reaches someone.
+          test -f build/windows/icon.ico || {
+            echo "::error::wails did not derive icon.ico from appicon.png"
+            exit 1
+          }
+
           installer=$(find build/bin -name "*.exe" -not -name "manga-tracker-desktop.exe" | head -1)
           test -n "$installer"
           cp "$installer" "${{ matrix.artifact }}"

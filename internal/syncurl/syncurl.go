@@ -11,9 +11,16 @@
 package syncurl
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"net/url"
 	"strings"
 )
+
+// srvScheme is the form every hosted MongoDB hands out, and the one that has to
+// be converted before it is stored.
+const srvScheme = "mongodb+srv://"
 
 // Problem is why a connection string was refused. The empty value means it was
 // not refused.
@@ -42,6 +49,9 @@ const (
 	CredentialsInAddress Problem = "credentialsInAddress"
 	// NoUser — a password with nobody to go with it.
 	NoUser Problem = "noUser"
+	// SrvUnresolved — a mongodb+srv:// address whose DNS record could not be
+	// read, so there is nothing to convert it into.
+	SrvUnresolved Problem = "srvUnresolved"
 )
 
 // Validate reports whether the string can be stored.
@@ -50,13 +60,75 @@ func Validate(raw string) Problem {
 	switch {
 	case value == "":
 		return Empty
-	case strings.HasPrefix(value, "mongodb+srv://"):
+	case strings.HasPrefix(value, srvScheme):
 		return SRV
 	case !strings.HasPrefix(value, "mongodb://"):
 		return NotMongo
 	default:
 		return None
 	}
+}
+
+// LookupSRV has the signature of (*net.Resolver).LookupSRV — the context-aware
+// one; the package-level net.LookupSRV takes none and cannot be cancelled.
+// Injected for the same reason every other outside call in this project is: a
+// test that resolved real DNS would fail on a train.
+type LookupSRV func(ctx context.Context, service, proto, name string) (string, []*net.SRV, error)
+
+// Resolve turns a `mongodb+srv://` address into the direct form, and leaves
+// anything else exactly as it was.
+//
+// This is the address Azure, Atlas and every other hosted MongoDB hands out, so
+// refusing it means telling people to go and resolve a DNS record by hand. It
+// is refused for a real reason — on Windows Bun does not read the system DNS
+// servers, so an srv URL there produces a sync that silently never runs — but
+// **Go resolves it fine on both systems**, because it asks the OS rather than
+// reading resolv.conf. So the app looks the record up once, at the moment
+// someone pastes it, and stores an address that works on either machine.
+//
+// The TXT record, which the connection-string spec also allows for options, is
+// deliberately ignored: no cluster this has met publishes one, and reading it
+// would be code with no case behind it.
+func Resolve(ctx context.Context, raw string, lookup LookupSRV) (string, Problem) {
+	value := strings.TrimSpace(raw)
+	if !strings.HasPrefix(value, srvScheme) {
+		return value, None
+	}
+
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", NotMongo
+	}
+	if parsed.Hostname() == "" {
+		return "", NoHost
+	}
+
+	_, records, err := lookup(ctx, "mongodb", "tcp", parsed.Hostname())
+	if err != nil || len(records) == 0 {
+		return "", SrvUnresolved
+	}
+
+	// Every target, not only the first: a real replica set publishes several,
+	// and a seed list is what lets the driver survive one of them being down.
+	hosts := make([]string, 0, len(records))
+	for _, record := range records {
+		// DNS names come back fully qualified, with the root dot.
+		hosts = append(hosts, fmt.Sprintf("%s:%d", strings.TrimSuffix(record.Target, "."), record.Port))
+	}
+
+	parsed.Scheme = "mongodb"
+	parsed.Host = strings.Join(hosts, ",")
+
+	// `mongodb+srv` implies TLS; plain `mongodb` does not. Dropping the scheme
+	// without saying so would turn an encrypted connection into a refused one,
+	// and the error a cluster gives for that names neither TLS nor this change.
+	query := parsed.Query()
+	if !query.Has("tls") && !query.Has("ssl") {
+		query.Set("tls", "true")
+		parsed.RawQuery = query.Encode()
+	}
+
+	return parsed.String(), None
 }
 
 // Credentials are what someone types when they do not have a whole connection

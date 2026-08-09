@@ -17,6 +17,10 @@ type SyncStatus struct {
 	Enabled   bool   `json:"enabled"`
 	Connected bool   `json:"connected"`
 	LastError string `json:"lastError"`
+	// LastSyncAt is an RFC 3339 timestamp, or empty if it has never run. Passed
+	// through as written rather than parsed: turning it into "hace 3 minutos"
+	// is wording, and wording belongs to the window.
+	LastSyncAt string `json:"lastSyncAt"`
 }
 
 type syncStatusBody struct {
@@ -25,6 +29,7 @@ type syncStatusBody struct {
 	LastError *struct {
 		Message string `json:"message"`
 	} `json:"lastError"`
+	LastSyncAt *string `json:"lastSyncAt"`
 }
 
 // FetchSyncStatus asks the backend where its sync stands.
@@ -49,6 +54,9 @@ func FetchSyncStatus(ctx context.Context, client *http.Client, baseURL string) (
 	status := SyncStatus{Enabled: body.Enabled, Connected: body.Connected}
 	if body.LastError != nil {
 		status.LastError = body.LastError.Message
+	}
+	if body.LastSyncAt != nil {
+		status.LastSyncAt = *body.LastSyncAt
 	}
 	return status, nil
 }

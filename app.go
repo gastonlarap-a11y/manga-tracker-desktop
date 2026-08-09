@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"manga-tracker-desktop/internal/backend"
@@ -118,12 +121,32 @@ type Settings struct {
 	// HasStoredCredential lets the screen offer to carry over the sync this
 	// machine already had, instead of presenting an empty form to someone who
 	// configured it long ago.
-	HasStoredCredential bool               `json:"hasStoredCredential"`
-	Browsers            []browsers.Browser `json:"browsers"`
-	StoreURL            string             `json:"storeUrl"`
+	HasStoredCredential bool `json:"hasStoredCredential"`
+	// Where sync points and how it is doing, so the screen can say "connected,
+	// against this server" instead of showing an empty form to someone whose
+	// sync has been running for weeks. Host and database only — the credential
+	// is parsed out on the service control's side and never travels here.
+	SyncHost string             `json:"syncHost"`
+	SyncDb   string             `json:"syncDb"`
+	SyncLive SyncLive           `json:"syncLive"`
+	Browsers []browsers.Browser `json:"browsers"`
+	StoreURL string             `json:"storeUrl"`
 	// Set when the service is there and still could not be asked — a real
 	// fault, shown as technical detail under a sentence the window writes.
 	Problem string `json:"problem"`
+}
+
+// SyncLive is how the sync is actually doing right now, as opposed to how it
+// was configured.
+//
+// Its own type with its own Asked field, for the reason stated in AGENTS.md:
+// "not connected" and "the backend did not answer" must not arrive as the same
+// false. The backend being unreachable says nothing about the credential.
+type SyncLive struct {
+	Asked      bool   `json:"asked"`
+	Connected  bool   `json:"connected"`
+	LastSyncAt string `json:"lastSyncAt"`
+	LastError  string `json:"lastError"`
 }
 
 // Settings gathers the state of this installation.
@@ -151,7 +174,33 @@ func (a *App) Settings() Settings {
 	settings.Port = reply.Port
 	settings.SyncConfigured = reply.SyncConfigured
 	settings.HasStoredCredential = reply.HasStoredCredential
+	settings.SyncHost = reply.SyncHost
+	settings.SyncDb = reply.SyncDb
+
+	// Only worth asking when there is something to report on: with no sync
+	// configured the answer is always the same, and it would cost every open of
+	// this screen an HTTP round trip to hear it.
+	if settings.SyncConfigured {
+		settings.SyncLive = a.liveSync()
+	}
 	return settings
+}
+
+func (a *App) liveSync() SyncLive {
+	state := a.deps.Look(a.ctx)
+	if state.BaseURL == "" {
+		return SyncLive{}
+	}
+	status, err := backend.FetchSyncStatus(a.ctx, a.client, state.BaseURL)
+	if err != nil {
+		return SyncLive{}
+	}
+	return SyncLive{
+		Asked:      true,
+		Connected:  status.Connected,
+		LastSyncAt: status.LastSyncAt,
+		LastError:  status.LastError,
+	}
 }
 
 // SyncOutcome is what the screen reports after saving credentials.
@@ -170,6 +219,11 @@ type SyncOutcome struct {
 	// UsesSrv warns that the credential in use is a mongodb+srv:// URL, which
 	// works here and never connects on Windows.
 	UsesSrv bool `json:"usesSrv"`
+	// Converted says the address stored is not the one that was pasted: a
+	// mongodb+srv:// was resolved into its direct form.
+	Converted bool `json:"converted"`
+	// Host is the server it ended up pointing at — no user, no password.
+	Host string `json:"host"`
 }
 
 // SetSync stores the user's own credentials and restarts the backend with them.
@@ -177,11 +231,37 @@ type SyncOutcome struct {
 // Configuring this is optional and always was: with nothing set the library
 // lives in the local SQLite file, there is no automatic sync and no button to
 // trigger one.
-func (a *App) SetSync(url string, database string) (SyncOutcome, error) {
-	if problem := syncurl.Validate(url); problem != syncurl.None {
+func (a *App) SetSync(pasted string, database string) (SyncOutcome, error) {
+	// What Azure and Atlas hand you is a mongodb+srv:// address, and that is
+	// the one form the backend cannot use on Windows. Rather than refuse the
+	// only string most people have, the app resolves the record here — Go asks
+	// the OS resolver, which answers on both systems — and stores the direct
+	// address, which works on either machine. Anything already direct comes
+	// back untouched and costs no lookup.
+	resolved, problem := syncurl.Resolve(a.ctx, pasted, net.DefaultResolver.LookupSRV)
+	if problem == syncurl.None {
+		problem = syncurl.Validate(resolved)
+	}
+	if problem != syncurl.None {
 		return SyncOutcome{Problem: string(problem)}, nil
 	}
-	return a.storeSync(url, database)
+
+	outcome, err := a.storeSync(resolved, database)
+	// Said out loud rather than done quietly: what got stored is not what was
+	// typed, and someone comparing the two later deserves to know why.
+	outcome.Converted = resolved != strings.TrimSpace(pasted)
+	outcome.Host = hostOf(resolved)
+	return outcome, err
+}
+
+// hostOf is the part of a connection string that is safe to show: never the
+// user, never the password.
+func hostOf(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
 }
 
 // SetSyncFields stores a connection assembled from separately typed fields.
