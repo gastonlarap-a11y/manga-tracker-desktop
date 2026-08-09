@@ -48,7 +48,20 @@ type Saving =
   | { kind: "saving" }
   | { kind: "rejected"; message: string }
   | { kind: "connected"; usesSrv?: boolean }
+  // Saved, but the backend was still restarting when we looked. Kept apart from
+  // "failed": telling someone their sync did not connect when it did is worse
+  // than telling them to look again in a moment.
+  | { kind: "unsettled" }
   | { kind: "failed"; detail: string };
+
+function outcomeOf(outcome: main.SyncOutcome): Saving {
+  if (!outcome.settled) {
+    return { kind: "unsettled" };
+  }
+  return outcome.connected
+    ? { kind: "connected", usesSrv: outcome.usesSrv }
+    : { kind: "failed", detail: outcome.lastError };
+}
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<main.Settings | null>(null);
@@ -83,11 +96,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           });
           return;
         }
-        setSaving(
-          outcome.connected
-            ? { kind: "connected" }
-            : { kind: "failed", detail: outcome.lastError },
-        );
+        setSaving(outcomeOf(outcome));
         load();
       })
       .catch((reason: unknown) =>
@@ -99,11 +108,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setSaving({ kind: "saving" });
     void UseStoredSync(database)
       .then((outcome) => {
-        setSaving(
-          outcome.connected
-            ? { kind: "connected", usesSrv: outcome.usesSrv }
-            : { kind: "failed", detail: outcome.lastError },
-        );
+        setSaving(outcomeOf(outcome));
         load();
       })
       .catch((reason: unknown) =>
@@ -349,6 +354,13 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                     </p>
                   )}
                 </>
+              )}
+              {saving.kind === "unsettled" && (
+                <p className="detail">
+                  Se guardó. El servidor está reiniciando con los datos nuevos y
+                  todavía no contestó — mirá <strong>Estado</strong> acá abajo en
+                  unos segundos.
+                </p>
               )}
               {saving.kind === "failed" && (
                 <p className="detail bad">
