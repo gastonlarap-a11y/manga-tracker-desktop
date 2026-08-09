@@ -45,6 +45,12 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// The service control ships inside the payload, so it has to be on disk
+	// before anything asks it a question — including the settings screen, which
+	// otherwise reports every answer as "not installed".
+	if err := a.deps.Prepare(); err != nil && a.setupErr == "" {
+		a.setupErr = err.Error()
+	}
 }
 
 // Look reports what the window should show: a backend it can display, an offer
@@ -97,15 +103,23 @@ type Settings struct {
 	// HasPayload is false in a development build, which carries no server. The
 	// screen says so in its own words instead of showing the exec error that
 	// asking a program that is not there produces.
-	HasPayload     bool               `json:"hasPayload"`
-	Installed      bool               `json:"installed"`
-	Port           int                `json:"port"`
-	DataDir        string             `json:"dataDir"`
-	ExtensionDir   string             `json:"extensionDir"`
-	Version        string             `json:"version"`
-	SyncConfigured bool               `json:"syncConfigured"`
-	Browsers       []browsers.Browser `json:"browsers"`
-	StoreURL       string             `json:"storeUrl"`
+	HasPayload bool `json:"hasPayload"`
+	// Asked reports whether the service control answered at all. Without it,
+	// "there is no service" and "I could not ask" both arrived as
+	// Installed:false, and a transient failure looked like a fresh machine.
+	Asked          bool   `json:"asked"`
+	Installed      bool   `json:"installed"`
+	Port           int    `json:"port"`
+	DataDir        string `json:"dataDir"`
+	ExtensionDir   string `json:"extensionDir"`
+	Version        string `json:"version"`
+	SyncConfigured bool   `json:"syncConfigured"`
+	// HasStoredCredential lets the screen offer to carry over the sync this
+	// machine already had, instead of presenting an empty form to someone who
+	// configured it long ago.
+	HasStoredCredential bool               `json:"hasStoredCredential"`
+	Browsers            []browsers.Browser `json:"browsers"`
+	StoreURL            string             `json:"storeUrl"`
 	// Set when the service is there and still could not be asked — a real
 	// fault, shown as technical detail under a sentence the window writes.
 	Problem string `json:"problem"`
@@ -131,9 +145,11 @@ func (a *App) Settings() Settings {
 		settings.Problem = err.Error()
 		return settings
 	}
+	settings.Asked = true
 	settings.Installed = reply.Installed
 	settings.Port = reply.Port
 	settings.SyncConfigured = reply.SyncConfigured
+	settings.HasStoredCredential = reply.HasStoredCredential
 	return settings
 }
 
@@ -145,6 +161,9 @@ type SyncOutcome struct {
 	Connected bool   `json:"connected"`
 	// LastError is the backend's own words about why it could not connect.
 	LastError string `json:"lastError"`
+	// UsesSrv warns that the credential in use is a mongodb+srv:// URL, which
+	// works here and never connects on Windows.
+	UsesSrv bool `json:"usesSrv"`
 }
 
 // SetSync stores the user's own credentials and restarts the backend with them.
@@ -171,6 +190,34 @@ func (a *App) SetSync(url string, database string) (SyncOutcome, error) {
 		return SyncOutcome{}, err
 	}
 	return SyncOutcome{Connected: status.Connected, LastError: status.LastError}, nil
+}
+
+// UseStoredSync turns synchronising back on with the credential this machine
+// already held, rather than making someone find and retype it.
+//
+// Nothing is sent anywhere and nothing was shipped: the credential has been in
+// this machine's keystore all along, and installing simply stopped referring to
+// it. Deliberate rather than automatic — turning on a connection to the cloud
+// is not something an install should decide.
+func (a *App) UseStoredSync(database string) (SyncOutcome, error) {
+	reply, err := a.service("use-stored-sync", "--db", syncurl.Database(database))
+	if err != nil {
+		return SyncOutcome{}, err
+	}
+
+	state := a.deps.Look(a.ctx)
+	if state.BaseURL == "" {
+		return SyncOutcome{UsesSrv: reply.UsesSrv}, nil
+	}
+	status, err := backend.WaitForSync(a.ctx, a.client, state.BaseURL, 20*time.Second)
+	if err != nil {
+		return SyncOutcome{UsesSrv: reply.UsesSrv}, err
+	}
+	return SyncOutcome{
+		Connected: status.Connected,
+		LastError: status.LastError,
+		UsesSrv:   reply.UsesSrv,
+	}, nil
 }
 
 // ClearSync turns synchronising off and goes back to local-only.

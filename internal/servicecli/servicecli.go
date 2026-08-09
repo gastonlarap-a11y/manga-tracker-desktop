@@ -35,6 +35,14 @@ type Reply struct {
 	// it — the Windows ACL case, which the app has to surface rather than hide.
 	UserCanControlIt bool `json:"userCanControlIt"`
 	SyncConfigured   bool `json:"syncConfigured"`
+	// HasStoredCredential says the system keystore on this machine holds one,
+	// even when the configuration does not — which is what happens after a
+	// fresh install replaces the service definition. Whether it exists, never
+	// what it is.
+	HasStoredCredential bool `json:"hasStoredCredential"`
+	// UsesSrv flags a stored mongodb+srv:// URL: it works here and never
+	// connects on Windows.
+	UsesSrv bool `json:"usesSrv"`
 }
 
 // Command runs a program and returns its stdout. Injected so the tests never

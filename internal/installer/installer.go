@@ -115,6 +115,20 @@ func (d Deps) ExtensionDir() string {
 	return filepath.Join(payload.RuntimeDir(d.DataDir), payload.ExtensionSubdir)
 }
 
+// Prepare writes the payload out if this build carries one.
+//
+// Called at startup rather than only from Install, because the service control
+// lives inside the payload: until it is on disk, nothing can ask the machine
+// whether a service is installed, and the settings screen showed every question
+// as "not installed". Idempotent and quick — 132 ms the first time, microseconds
+// afterwards.
+func (d Deps) Prepare() error {
+	if !d.Available() {
+		return nil
+	}
+	return d.Extract(d.DataDir)
+}
+
 // Look reports what the app should offer.
 func (d Deps) Look(ctx context.Context) State {
 	if baseURL := d.Discover(ctx); baseURL != "" {
