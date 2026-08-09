@@ -34,9 +34,19 @@ const (
 	// comparison instead of tens of thousands of file writes.
 	versionMarker = ".payload-version"
 
-	// AppSubdir is where the backend lands once extracted, and is what the
-	// service CLI is given as --app-dir. Flat on purpose: the CLI looks for the
-	// interpreter at <app-dir>/bun and runs index.js from there.
+	// RuntimeSubdir is the only directory this package owns, and the only one
+	// it is allowed to delete.
+	//
+	// Extraction wipes its destination before rewriting it, so that a leftover
+	// file from an older version cannot survive an upgrade. Pointing that at
+	// the data directory would have wiped the library along with it: the
+	// database, and every backup beside it, live there. The payload gets a
+	// directory of its own precisely so that "delete everything here" can never
+	// mean anything else.
+	RuntimeSubdir = "runtime"
+	// AppSubdir is where the backend lands, and is what the service CLI is
+	// given as --app-dir. Flat on purpose: the CLI looks for the interpreter at
+	// <app-dir>/bun and runs index.js from there.
 	AppSubdir = "app"
 	// ExtensionSubdir holds the MV3 build, for loading unpacked while the
 	// store review is pending.
@@ -62,24 +72,37 @@ func Available() bool {
 // build that was never meant to install anything.
 var ErrNoPayload = errors.New("this build carries no bundled backend")
 
-// ExtractedAt reports whether `dir` already holds this exact payload.
-func ExtractedAt(dir string) bool {
-	return markerAt(dir) == Version()
+// RuntimeDir is where the payload lives inside a data directory. Nothing else
+// in `dataDir` is this package's business.
+func RuntimeDir(dataDir string) string {
+	return filepath.Join(dataDir, RuntimeSubdir)
 }
 
-// Extract writes the payload into dir, skipping the work when the same version
-// is already there.
-func Extract(dir string) error {
+// ExtractedAt reports whether the payload in `dataDir` is already this version.
+func ExtractedAt(dataDir string) bool {
+	return markerAt(RuntimeDir(dataDir)) == Version()
+}
+
+// Extract writes the payload into `dataDir/runtime`, skipping the work when the
+// same version is already there.
+//
+// It takes the data directory rather than the destination so that no caller can
+// aim the deletion somewhere else by mistake — which is exactly how the library
+// nearly got wiped.
+func Extract(dataDir string) error {
 	if !Available() {
 		return ErrNoPayload
 	}
-	return extractFS(dist, "dist", dir, Version())
+	return extractFS(dist, "dist", RuntimeDir(dataDir), Version())
 }
 
 // extractFS takes the source as a parameter so the extraction itself can be
 // tested. A development build embeds nothing, so without this the riskiest part
 // of the package — permissions, the marker, replacing an older version — would
 // only ever run for the first time on a user's machine.
+//
+// `dir` must be a directory this package owns: it is deleted before it is
+// rewritten. See RuntimeSubdir.
 //
 // The marker is written last on purpose: a run that dies halfway leaves none,
 // so the next one starts over instead of trusting a half-written tree.

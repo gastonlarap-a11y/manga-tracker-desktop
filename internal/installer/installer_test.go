@@ -3,6 +3,7 @@ package installer
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,6 +18,8 @@ type recorder struct {
 	extracted []string
 	commands  [][]string
 	waited    []int
+	// What `status` answers. Zero value: nothing installed yet.
+	status servicecli.Reply
 }
 
 func newRecorder(found string, available bool, reply servicecli.Reply, callErr error) *recorder {
@@ -31,6 +34,12 @@ func newRecorder(found string, available bool, reply servicecli.Reply, callErr e
 		},
 		Call: func(_ context.Context, appDir string, args ...string) (servicecli.Reply, error) {
 			r.commands = append(r.commands, append([]string{appDir}, args...))
+			// `status` is asked before installing, to catch a service that is
+			// registered but stopped. Answered separately so a test can
+			// describe a machine that already has one.
+			if len(args) > 0 && args[0] == "status" {
+				return r.status, nil
+			}
 			return reply, callErr
 		},
 		WaitHealthy: func(_ context.Context, port int) error {
@@ -90,6 +99,39 @@ func TestInstallRefusesToTouchARunningBackend(t *testing.T) {
 	}
 }
 
+func TestInstallRefusesWhenTheServiceIsRegisteredButStopped(t *testing.T) {
+	// The case ErrAlreadyRunning misses. Stopping the service is exactly what
+	// someone does to try the installer, and at that moment the machine still
+	// has a definition pointing at their real setup.
+	r := newRecorder("", true, installed(), nil)
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+
+	_, err := r.deps.Install(context.Background())
+
+	if !errors.Is(err, ErrAlreadyInstalled) {
+		t.Fatalf("expected ErrAlreadyInstalled, got %v", err)
+	}
+	for _, command := range r.commands {
+		if strings.Contains(strings.Join(command, " "), "install") {
+			t.Error("the service definition must not be overwritten")
+		}
+	}
+}
+
+func TestInstallExtractsIntoItsOwnDirectory(t *testing.T) {
+	// Extraction deletes its destination. Aiming it at the data directory
+	// would take the library and its backups with it.
+	r := newRecorder("", true, installed(), nil)
+
+	if _, err := r.deps.Install(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.HasSuffix(r.deps.AppDir(), filepath.Join(payload.RuntimeSubdir, payload.AppSubdir)) {
+		t.Errorf("the backend must live under runtime/, got %s", r.deps.AppDir())
+	}
+}
+
 func TestInstallExtractsThenRegisters(t *testing.T) {
 	r := newRecorder("", true, installed(), nil)
 
@@ -101,10 +143,11 @@ func TestInstallExtractsThenRegisters(t *testing.T) {
 	if len(r.extracted) != 1 || r.extracted[0] != "/data/MangaTracker" {
 		t.Errorf("expected one extraction into the data dir, got %v", r.extracted)
 	}
-	if len(r.commands) != 1 {
-		t.Fatalf("expected one service command, got %v", r.commands)
+	// status first, then install.
+	if len(r.commands) != 2 {
+		t.Fatalf("expected status then install, got %v", r.commands)
 	}
-	command := strings.Join(r.commands[0], " ")
+	command := strings.Join(r.commands[1], " ")
 	// The CLI is run from the extracted tree and told where both directories are.
 	for _, want := range []string{"install", "--app-dir", "--data-dir", payload.AppSubdir} {
 		if !strings.Contains(command, want) {
