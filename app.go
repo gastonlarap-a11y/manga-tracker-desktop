@@ -126,11 +126,16 @@ type Settings struct {
 	// against this server" instead of showing an empty form to someone whose
 	// sync has been running for weeks. Host and database only — the credential
 	// is parsed out on the service control's side and never travels here.
-	SyncHost string             `json:"syncHost"`
-	SyncDb   string             `json:"syncDb"`
-	SyncLive SyncLive           `json:"syncLive"`
-	Browsers []browsers.Browser `json:"browsers"`
-	StoreURL string             `json:"storeUrl"`
+	SyncHost string   `json:"syncHost"`
+	SyncDb   string   `json:"syncDb"`
+	SyncLive SyncLive `json:"syncLive"`
+	// SecretInConfig says the credential is in the service's configuration
+	// rather than only in the system keystore — the fallback for a machine
+	// whose service cannot read the keystore at startup. Shown, because where a
+	// password lives is not a detail to keep from whoever owns it.
+	SecretInConfig bool               `json:"secretInConfig"`
+	Browsers       []browsers.Browser `json:"browsers"`
+	StoreURL       string             `json:"storeUrl"`
 	// Set when the service is there and still could not be asked — a real
 	// fault, shown as technical detail under a sentence the window writes.
 	Problem string `json:"problem"`
@@ -176,6 +181,7 @@ func (a *App) Settings() Settings {
 	settings.HasStoredCredential = reply.HasStoredCredential
 	settings.SyncHost = reply.SyncHost
 	settings.SyncDb = reply.SyncDb
+	settings.SecretInConfig = reply.SecretInConfig
 
 	// Only worth asking when there is something to report on: with no sync
 	// configured the answer is always the same, and it would cost every open of
@@ -224,6 +230,11 @@ type SyncOutcome struct {
 	Converted bool `json:"converted"`
 	// Host is the server it ended up pointing at — no user, no password.
 	Host string `json:"host"`
+	// SecretInConfig is true when the credential had to be written into the
+	// service's configuration because this machine's service could not read it
+	// from the keystore at startup. Surfaced rather than hidden: it is a real
+	// difference in where a password lives.
+	SecretInConfig bool `json:"secretInConfig"`
 }
 
 // SetSync stores the user's own credentials and restarts the backend with them.
@@ -296,7 +307,39 @@ func (a *App) storeSync(url string, database string) (SyncOutcome, error) {
 	); err != nil {
 		return SyncOutcome{}, err
 	}
-	return a.awaitSync()
+	return a.awaitSyncOrFallBack()
+}
+
+// awaitSyncOrFallBack waits for the new configuration to connect, and puts the
+// credential back in the service's configuration if it did not.
+//
+// `set-sync` leaves the credential in the system keystore and writes only a
+// marker into the service's configuration, so the launcher reads it at startup
+// and no plaintext copy exists. Whether a given machine's service *can* read
+// its own keystore is not knowable in advance — it depends on how the session
+// was created, and a Windows task running as S4U has no password behind it, so
+// unwrapping a DPAPI blob may simply fail there.
+//
+// Rather than guess, this tries the good path and watches. A sync that does not
+// come up is worse than a credential in a file locked to the account, which is
+// what every install did until now — so on failure it falls back, says so, and
+// leaves the machine working.
+func (a *App) awaitSyncOrFallBack() (SyncOutcome, error) {
+	outcome, err := a.awaitSync()
+	if err != nil || !outcome.Settled || outcome.Connected {
+		return outcome, err
+	}
+
+	reply, pinErr := a.service("pin-config-secret")
+	if pinErr != nil {
+		// The fallback itself failed. The original outcome is the honest
+		// answer: it did not connect, and here is what the backend said.
+		return outcome, nil
+	}
+
+	pinned, err := a.awaitSync()
+	pinned.SecretInConfig = reply.SecretInConfig
+	return pinned, err
 }
 
 // awaitSync reports whether the configuration that was just written connects.
@@ -362,7 +405,7 @@ func (a *App) UseStoredSync(database string) (SyncOutcome, error) {
 	// one: syncurl refuses an srv URL before it is ever stored. It survives on
 	// this path because the credential predates that rule — it was put in the
 	// keystore by hand, and it works on this machine.
-	outcome, err := a.awaitSync()
+	outcome, err := a.awaitSyncOrFallBack()
 	outcome.UsesSrv = reply.UsesSrv
 	return outcome, err
 }

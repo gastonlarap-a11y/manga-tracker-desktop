@@ -40,6 +40,11 @@ type Reply struct {
 	// travel here to be displayed.
 	SyncHost string `json:"syncHost"`
 	SyncDb   string `json:"syncDb"`
+	// SecretInConfig is true while the credential is still sitting in the
+	// service's own configuration in plaintext, which the launcher exists to
+	// end — and which remains the fallback for a machine whose service cannot
+	// read its keystore at startup.
+	SecretInConfig bool `json:"secretInConfig"`
 	// HasStoredCredential says the system keystore on this machine holds one,
 	// even when the configuration does not — which is what happens after a
 	// fresh install replaces the service definition. Whether it exists, never

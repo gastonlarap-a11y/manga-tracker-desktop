@@ -93,6 +93,7 @@ export namespace main {
 	    syncHost: string;
 	    syncDb: string;
 	    syncLive: SyncLive;
+	    secretInConfig: boolean;
 	    browsers: browsers.Browser[];
 	    storeUrl: string;
 	    problem: string;
@@ -115,6 +116,7 @@ export namespace main {
 	        this.syncHost = source["syncHost"];
 	        this.syncDb = source["syncDb"];
 	        this.syncLive = this.convertValues(source["syncLive"], SyncLive);
+	        this.secretInConfig = source["secretInConfig"];
 	        this.browsers = this.convertValues(source["browsers"], browsers.Browser);
 	        this.storeUrl = source["storeUrl"];
 	        this.problem = source["problem"];
@@ -147,6 +149,7 @@ export namespace main {
 	    usesSrv: boolean;
 	    converted: boolean;
 	    host: string;
+	    secretInConfig: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SyncOutcome(source);
@@ -161,6 +164,7 @@ export namespace main {
 	        this.usesSrv = source["usesSrv"];
 	        this.converted = source["converted"];
 	        this.host = source["host"];
+	        this.secretInConfig = source["secretInConfig"];
 	    }
 	}
 

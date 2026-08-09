@@ -174,9 +174,15 @@ func (d Deps) Prepare(ctx context.Context) error {
 		return nil
 	}
 
-	// Restarting reads the new tree — and the service definition still points
-	// at the same path, so nothing has to be re-registered.
-	if _, err := d.Call(ctx, d.AppDir(), "restart"); err != nil {
+	// `repair`, not `restart`: restarting only reloads what is already
+	// registered, and a machine installed before the launcher existed would go
+	// on starting the server directly — with its credential in a plaintext file
+	// forever, and with a configuration the newer commands would hand it in a
+	// form it cannot read. Re-registering is the whole migration, and it keeps
+	// the port and the sync settings it finds.
+	if _, err := d.Call(
+		ctx, d.AppDir(), "repair", "--app-dir", d.AppDir(), "--data-dir", d.DataDir,
+	); err != nil {
 		return fmt.Errorf("the update was written but the backend did not come back: %w", err)
 	}
 	return nil
