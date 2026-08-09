@@ -35,6 +35,11 @@ type Reply struct {
 	// it — the Windows ACL case, which the app has to surface rather than hide.
 	UserCanControlIt bool `json:"userCanControlIt"`
 	SyncConfigured   bool `json:"syncConfigured"`
+	// Where sync points — host and database only. The CLI parses the
+	// connection string on its side precisely so the credential never has to
+	// travel here to be displayed.
+	SyncHost string `json:"syncHost"`
+	SyncDb   string `json:"syncDb"`
 	// HasStoredCredential says the system keystore on this machine holds one,
 	// even when the configuration does not — which is what happens after a
 	// fresh install replaces the service definition. Whether it exists, never

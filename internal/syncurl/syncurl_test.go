@@ -1,10 +1,162 @@
 package syncurl
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/url"
 	"strings"
 	"testing"
 )
+
+// answers builds a LookupSRV that returns fixed records and records what it was
+// asked for. Nothing here ever touches DNS.
+func answers(records []*net.SRV, err error, asked *string) LookupSRV {
+	return func(_ context.Context, service, proto, name string) (string, []*net.SRV, error) {
+		*asked = service + "/" + proto + "/" + name
+		return "", records, err
+	}
+}
+
+// The shape Azure DocumentDB actually publishes: one target, port 10260, with
+// the trailing root dot DNS always includes.
+func azureRecord() []*net.SRV {
+	return []*net.SRV{{
+		Target: "fc-example-000.global.mongocluster.cosmos.azure.com.",
+		Port:   10260,
+	}}
+}
+
+// The string Azure hands you in the portal, verbatim in shape.
+const azurePasted = "mongodb+srv://reader:p%40ssword@cluster-1609.global.mongocluster.cosmos.azure.com/" +
+	"?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+
+func TestResolveConvertsWhatAzureGivesYou(t *testing.T) {
+	var asked string
+
+	got, problem := Resolve(context.Background(), azurePasted, answers(azureRecord(), nil, &asked))
+
+	if problem != None {
+		t.Fatalf("unexpected problem: %q", problem)
+	}
+	if asked != "mongodb/tcp/cluster-1609.global.mongocluster.cosmos.azure.com" {
+		t.Errorf("looked up the wrong record: %q", asked)
+	}
+
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("produced an unparseable url %q: %v", got, err)
+	}
+	if parsed.Scheme != "mongodb" {
+		t.Errorf("expected the direct scheme, got %q", parsed.Scheme)
+	}
+	// The root dot has to go: a driver dialling "host.:10260" does not resolve.
+	if parsed.Host != "fc-example-000.global.mongocluster.cosmos.azure.com:10260" {
+		t.Errorf("unexpected host: %q", parsed.Host)
+	}
+	// The credential must survive untouched — still encoded exactly once.
+	if password, _ := parsed.User.Password(); password != "p@ssword" {
+		t.Errorf("the password did not survive: %q", password)
+	}
+	if strings.Count(got, "@") != 1 {
+		t.Errorf("the password lost its escaping: %q", got)
+	}
+	// And the options the cluster needs.
+	if parsed.Query().Get("authMechanism") != "SCRAM-SHA-256" {
+		t.Errorf("the options were lost: %q", parsed.RawQuery)
+	}
+}
+
+func TestResolveKeepsTLSOnWhenTheSchemeStopsImplyingIt(t *testing.T) {
+	// mongodb+srv implies TLS and plain mongodb does not, so a conversion that
+	// said nothing would turn an encrypted connection into a refused one — and
+	// the error a cluster gives for that mentions neither TLS nor this step.
+	var asked string
+	bare := "mongodb+srv://user:pass@cluster.example.com/?retrywrites=false"
+
+	got, problem := Resolve(context.Background(), bare, answers(azureRecord(), nil, &asked))
+
+	if problem != None {
+		t.Fatalf("unexpected problem: %q", problem)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.Query().Get("tls") != "true" {
+		t.Errorf("tls was not carried over: %q", got)
+	}
+}
+
+func TestResolveDoesNotAddTLSWhenItIsAlreadyDecided(t *testing.T) {
+	var asked string
+	for _, raw := range []string{
+		"mongodb+srv://u:p@cluster.example.com/?tls=false",
+		"mongodb+srv://u:p@cluster.example.com/?ssl=true",
+	} {
+		got, problem := Resolve(context.Background(), raw, answers(azureRecord(), nil, &asked))
+		if problem != None {
+			t.Fatalf("unexpected problem: %q", problem)
+		}
+		if strings.Contains(got, "tls=true") && strings.Contains(raw, "tls=false") {
+			t.Errorf("overrode an explicit tls=false: %q", got)
+		}
+	}
+}
+
+func TestResolveKeepsEverySeedItIsGiven(t *testing.T) {
+	// A real replica set publishes several, and the seed list is what lets the
+	// driver survive one of them being down.
+	var asked string
+	records := []*net.SRV{
+		{Target: "a.example.com.", Port: 27017},
+		{Target: "b.example.com.", Port: 27018},
+	}
+
+	got, problem := Resolve(context.Background(), "mongodb+srv://u:p@cluster.example.com/", answers(records, nil, &asked))
+
+	if problem != None {
+		t.Fatalf("unexpected problem: %q", problem)
+	}
+	if !strings.Contains(got, "a.example.com:27017,b.example.com:27018") {
+		t.Errorf("expected both seeds, got %q", got)
+	}
+}
+
+func TestResolveLeavesAnythingThatIsNotSrvAlone(t *testing.T) {
+	// Writing the direct form by hand still works exactly as it did — the
+	// conversion is one more road in, not a replacement.
+	var asked string
+	direct := "mongodb://user:pass@host:10260/?tls=true"
+
+	got, problem := Resolve(context.Background(), direct, answers(nil, errors.New("must not be called"), &asked))
+
+	if problem != None || got != direct {
+		t.Errorf("expected it untouched, got %q / %q", got, problem)
+	}
+	if asked != "" {
+		t.Errorf("a direct address must not cost a DNS lookup: %q", asked)
+	}
+}
+
+func TestResolveSaysSoWhenTheRecordIsNotThere(t *testing.T) {
+	var asked string
+	for _, tc := range []struct {
+		name    string
+		records []*net.SRV
+		err     error
+	}{
+		{"the lookup failed", nil, errors.New("no such host")},
+		{"the lookup answered with nothing", []*net.SRV{}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problem := Resolve(context.Background(), azurePasted, answers(tc.records, tc.err, &asked))
+			if problem != SrvUnresolved {
+				t.Errorf("expected srvUnresolved, got %q", problem)
+			}
+		})
+	}
+}
 
 func TestValidateAcceptsADirectConnectionString(t *testing.T) {
 	for _, raw := range []string{

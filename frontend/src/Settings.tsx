@@ -24,6 +24,8 @@ const SYNC_PROBLEMS: Record<string, string> = {
   credentialsInAddress:
     "La dirección ya trae un usuario y una contraseña adentro. Dejá los campos de abajo vacíos, o sacáselos a la dirección.",
   noUser: "Pusiste una contraseña pero no un usuario.",
+  srvUnresolved:
+    "No pude averiguar en qué servidor está ese cluster: el DNS no respondió. Revisá la conexión a internet, o pegá la dirección directa (mongodb://servidor:puerto/…) si la tenés.",
 };
 
 /**
@@ -47,25 +49,61 @@ type Saving =
   | { kind: "idle" }
   | { kind: "saving" }
   | { kind: "rejected"; message: string }
-  | { kind: "connected"; usesSrv?: boolean }
+  // convertedTo is set when what was stored is not what was pasted: a
+  // mongodb+srv:// address resolved into its direct form. Saying so beats
+  // letting someone find a different string than the one they typed.
+  | { kind: "connected"; usesSrv?: boolean; convertedTo?: string }
   // Saved, but the backend was still restarting when we looked. Kept apart from
   // "failed": telling someone their sync did not connect when it did is worse
   // than telling them to look again in a moment.
   | { kind: "unsettled" }
   | { kind: "failed"; detail: string };
 
+/**
+ * "hace 3 minutos", from an RFC 3339 timestamp. Written here rather than in Go
+ * for the same reason every other sentence is: the wording lives in one file,
+ * in one language.
+ */
+function sinceLabel(iso: string): string {
+  const at = Date.parse(iso);
+  if (Number.isNaN(at)) {
+    return "";
+  }
+  const minutes = Math.floor((Date.now() - at) / 60_000);
+  if (minutes < 1) {
+    return "recién";
+  }
+  if (minutes < 60) {
+    return `hace ${minutes} ${minutes === 1 ? "minuto" : "minutos"}`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `hace ${hours} ${hours === 1 ? "hora" : "horas"}`;
+  }
+  const days = Math.floor(hours / 24);
+  return `hace ${days} ${days === 1 ? "día" : "días"}`;
+}
+
 function outcomeOf(outcome: main.SyncOutcome): Saving {
   if (!outcome.settled) {
     return { kind: "unsettled" };
   }
   return outcome.connected
-    ? { kind: "connected", usesSrv: outcome.usesSrv }
+    ? {
+        kind: "connected",
+        usesSrv: outcome.usesSrv,
+        convertedTo: outcome.converted ? outcome.host : "",
+      }
     : { kind: "failed", detail: outcome.lastError };
 }
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<main.Settings | null>(null);
   const [wantsSync, setWantsSync] = useState(false);
+  // The form is a thing you open, not the default view. With sync already
+  // running there is nothing to fill in, and showing the fields anyway is what
+  // made someone ask whether both tabs had to be completed.
+  const [editing, setEditing] = useState(false);
   const [entry, setEntry] = useState<Entry>(EMPTY_FIELDS);
   const [showPassword, setShowPassword] = useState(false);
   const [database, setDatabase] = useState("");
@@ -97,6 +135,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           return;
         }
         setSaving(outcomeOf(outcome));
+        // Back to the summary: the form did its job, and leaving it open with
+        // the credential still in it invites a second save nobody meant.
+        setEditing(false);
+        setEntry(EMPTY_FIELDS);
         load();
       })
       .catch((reason: unknown) =>
@@ -121,6 +163,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     void ClearSync()
       .then(() => {
         setWantsSync(false);
+        setEditing(false);
         setEntry(EMPTY_FIELDS);
         setShowPassword(false);
         setSaving({ kind: "idle" });
@@ -180,6 +223,66 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 )
               )}
 
+              {/* Already synchronising, and not in the middle of changing it:
+                  the answer to "am I connected?" comes before any form. */}
+              {settings.syncConfigured && !editing && (
+                <div className="fields">
+                  <p
+                    className={`detail ${
+                      !settings.syncLive.asked
+                        ? ""
+                        : settings.syncLive.connected
+                          ? "good"
+                          : "bad"
+                    }`}
+                  >
+                    {!settings.syncLive.asked
+                      ? "Configurada, pero no pude preguntarle al servidor cómo está."
+                      : settings.syncLive.connected
+                        ? `Conectada${
+                            sinceLabel(settings.syncLive.lastSyncAt) === ""
+                              ? ""
+                              : ` · sincronizado ${sinceLabel(settings.syncLive.lastSyncAt)}`
+                          }`
+                        : "Configurada, pero no está conectando."}
+                    {settings.syncLive.asked &&
+                      !settings.syncLive.connected &&
+                      settings.syncLive.lastError !== "" && (
+                        <span className="reason">
+                          {" "}
+                          {settings.syncLive.lastError}
+                        </span>
+                      )}
+                  </p>
+                  <dl className="status">
+                    <dt>Servidor</dt>
+                    <dd>
+                      <code>{settings.syncHost}</code>
+                    </dd>
+                    <dt>Base de datos</dt>
+                    <dd>
+                      <code>{settings.syncDb}</code>
+                    </dd>
+                  </dl>
+                  <div className="row">
+                    <button
+                      type="button"
+                      className="action"
+                      onClick={() => {
+                        setEditing(true);
+                        setWantsSync(true);
+                        setSaving({ kind: "idle" });
+                      }}
+                    >
+                      Cambiar
+                    </button>
+                    <button type="button" className="action" onClick={turnOff}>
+                      Apagar
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {settings.hasStoredCredential && !settings.syncConfigured && (
                 <div className="fields">
                   <p className="detail">
@@ -202,29 +305,31 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 </div>
               )}
 
-              <div className="choice">
-                <label>
-                  <input
-                    type="radio"
-                    name="sync"
-                    checked={!wantsSync}
-                    onChange={() => setWantsSync(false)}
-                  />
-                  Sólo en esta computadora
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="sync"
-                    checked={wantsSync}
-                    disabled={!settings.installed}
-                    onChange={() => setWantsSync(true)}
-                  />
-                  También en una base de datos mía
-                </label>
-              </div>
+              {(!settings.syncConfigured || editing) && (
+                <div className="choice">
+                  <label>
+                    <input
+                      type="radio"
+                      name="sync"
+                      checked={!wantsSync}
+                      onChange={() => setWantsSync(false)}
+                    />
+                    Sólo en esta computadora
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="sync"
+                      checked={wantsSync}
+                      disabled={!settings.installed}
+                      onChange={() => setWantsSync(true)}
+                    />
+                    También en una base de datos mía
+                  </label>
+                </div>
+              )}
 
-              {wantsSync && (
+              {wantsSync && (!settings.syncConfigured || editing) && (
                 <div className="fields">
                   <div className="row tabs">
                     <button
@@ -328,9 +433,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                     >
                       {saving.kind === "saving" ? "Guardando…" : "Guardar y conectar"}
                     </button>
-                    {settings.syncConfigured && (
-                      <button type="button" className="action" onClick={turnOff}>
-                        Apagar
+                    {editing && (
+                      <button
+                        type="button"
+                        className="action"
+                        onClick={() => {
+                          setEditing(false);
+                          setEntry(EMPTY_FIELDS);
+                          setSaving({ kind: "idle" });
+                        }}
+                      >
+                        Cancelar
                       </button>
                     )}
                   </div>
@@ -345,6 +458,16 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               {saving.kind === "connected" && (
                 <>
                   <p className="detail good">Conectado. Ya está sincronizando.</p>
+                  {saving.convertedTo !== undefined &&
+                    saving.convertedTo !== "" && (
+                      <p className="detail">
+                        Guardé la dirección directa —{" "}
+                        <code>{saving.convertedTo}</code> — en lugar de la{" "}
+                        <code>mongodb+srv://</code> que pegaste. Es la misma
+                        base; así también funciona en Windows, donde las
+                        direcciones <code>srv</code> nunca conectan.
+                      </p>
+                    )}
                   {saving.usesSrv === true && (
                     <p className="detail bad">
                       Ojo: esa dirección empieza con <code>mongodb+srv://</code>.

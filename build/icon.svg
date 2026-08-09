@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Manga Tracker</title>
+  <!--
+    The desktop half of the same product as manga-tracker-extension, so it is
+    the same drawing: an open book with a bookmark. Dark instead of the
+    extension's violet, so the two are one family and still tell each other
+    apart at a glance.
+
+    Dark carries a risk on a dark desktop — a near-black square with nothing
+    around it dissolves into the wallpaper at 16px. Three things answer that,
+    and none of them is "hope":
+      · the pages are near-white and take most of the square, so the icon reads
+        as a bright shape rather than a dark one
+      · the bookmark keeps the extension's pink, the only saturated colour here
+      · the square has a lighter rim, so its outline exists even when the fill
+        matches whatever is behind it
+
+    Geometry follows Apple's grid: the shape occupies 824 of 1024 with the rest
+    transparent margin, and macOS does not mask it — this rounded square IS the
+    icon. Wails regenerates the .icns from build/appicon.png on every build, and
+    the Windows .ico from the same file as long as no icon.ico is committed.
+  -->
+  <defs>
+    <linearGradient id="slab" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#252336"/>
+      <stop offset="1" stop-color="#14131f"/>
+    </linearGradient>
+    <linearGradient id="leftPage" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e7e9f2"/>
+    </linearGradient>
+    <linearGradient id="rightPage" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c9cee0"/>
+      <stop offset="1" stop-color="#a7adc4"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#slab)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="none"
+        stroke="#4a4763" stroke-width="8"/>
+
+  <!--
+    The pages, mirrored around the spine. They MEET at x=512 rather than
+    leaving a gap: the extension's icon is drawn that way, and a first attempt
+    with a 40px gutter read as two separate shapes at small sizes instead of
+    one open book. Coordinates are the extension's, scaled from its 96-unit
+    square onto this 824-unit one.
+  -->
+  <path d="M254 323 c94 -60 189 -60 258 9 v386 c-69 -60 -164 -60 -258 -9 z"
+        fill="url(#leftPage)"/>
+  <path d="M770 323 c-94 -60 -189 -60 -258 9 v386 c69 -60 164 -60 258 -9 z"
+        fill="url(#rightPage)"/>
+
+  <!-- The bookmark: the one saturated colour, and what the eye finds first. -->
+  <path d="M598 323 h137 v232 l-69 -52 -68 52 z" fill="#f472b6"/>
+</svg>
