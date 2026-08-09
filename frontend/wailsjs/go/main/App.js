@@ -26,6 +26,10 @@ export function SetSync(arg1, arg2) {
   return window['go']['main']['App']['SetSync'](arg1, arg2);
 }
 
+export function SetSyncFields(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SetSyncFields'](arg1, arg2, arg3, arg4);
+}
+
 export function Settings() {
   return window['go']['main']['App']['Settings']();
 }

@@ -54,26 +54,67 @@ func Exec(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
+// CommandWithInput runs a program that is handed something on stdin.
+//
+// Separate from Command rather than an extra parameter on it: the difference is
+// not a detail of how the process is spawned, it is which values are allowed to
+// travel there. Everything that goes through this one is a credential.
+type CommandWithInput func(ctx context.Context, stdin string, name string, args ...string) ([]byte, error)
+
+// ExecWithInput is the real one. The value reaches the child through a pipe,
+// which `ps` and Task Manager do not show — unlike an argument, which every
+// process on the machine can read.
+func ExecWithInput(ctx context.Context, stdin string, name string, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, name, args...)
+	command.Stdin = strings.NewReader(stdin)
+	return command.Output()
+}
+
 // Client knows where the bundled interpreter and the CLI live.
 type Client struct {
-	BunPath    string
-	ScriptPath string
-	Run        Command
+	BunPath      string
+	ScriptPath   string
+	Run          Command
+	RunWithInput CommandWithInput
 }
 
 // Call runs one command and returns its reply.
-//
-// Two different failures are kept apart on purpose: the program not running at
-// all, and the program running and reporting that it could not do the job. The
-// second one carries a message worth showing to whoever is looking at the
-// screen; the first one usually means the payload was not extracted.
 func (c Client) Call(ctx context.Context, args ...string) (Reply, error) {
 	run := c.Run
 	if run == nil {
 		run = Exec
 	}
+	stdout, err := run(ctx, c.BunPath, c.argsFor(args)...)
+	return parseReply(stdout, err)
+}
 
-	stdout, err := run(ctx, c.BunPath, append([]string{"run", c.ScriptPath}, args...)...)
+// CallWithSecret is Call for the one command that carries a credential.
+//
+// The value goes to the CLI's stdin rather than into its arguments. That is the
+// rule manga-tracker-api already holds for `az` — "never --value, which ps
+// would expose" — and this hop was the exception: the connection string a user
+// types is a cluster password, and it was readable by every process on the
+// machine for as long as the command ran.
+func (c Client) CallWithSecret(ctx context.Context, secret string, args ...string) (Reply, error) {
+	run := c.RunWithInput
+	if run == nil {
+		run = ExecWithInput
+	}
+	stdout, err := run(ctx, secret, c.BunPath, c.argsFor(args)...)
+	return parseReply(stdout, err)
+}
+
+func (c Client) argsFor(args []string) []string {
+	return append([]string{"run", c.ScriptPath}, args...)
+}
+
+// parseReply turns the CLI's output into a reply or an error.
+//
+// Two different failures are kept apart on purpose: the program not running at
+// all, and the program running and reporting that it could not do the job. The
+// second one carries a message worth showing to whoever is looking at the
+// screen; the first one usually means the payload was not extracted.
+func parseReply(stdout []byte, err error) (Reply, error) {
 	// The CLI prints its JSON and then exits non-zero on failure, so the output
 	// is worth parsing even when the process failed.
 	var reply Reply

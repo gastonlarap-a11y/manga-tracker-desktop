@@ -10,7 +10,10 @@
 // so every message the user reads is written in one place, in one language.
 package syncurl
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
 
 // Problem is why a connection string was refused. The empty value means it was
 // not refused.
@@ -30,6 +33,15 @@ const (
 	SRV Problem = "srv"
 	// NotMongo — not a MongoDB connection string at all.
 	NotMongo Problem = "notMongo"
+	// NoHost — an address with no server in it.
+	NoHost Problem = "noHost"
+	// CredentialsInAddress — the address already carries a `user:pass@` and the
+	// separate fields were filled in too. Answered rather than guessed: picking
+	// one silently is how someone ends up staring at an authentication failure
+	// for a password they are sure they typed.
+	CredentialsInAddress Problem = "credentialsInAddress"
+	// NoUser — a password with nobody to go with it.
+	NoUser Problem = "noUser"
 )
 
 // Validate reports whether the string can be stored.
@@ -45,6 +57,85 @@ func Validate(raw string) Problem {
 	default:
 		return None
 	}
+}
+
+// Credentials are what someone types when they do not have a whole connection
+// string to paste — which is most people, most of the time.
+//
+// Address may be a bare `host:port` or a full `mongodb://…` with the options
+// already on it; either way it carries no user and no password.
+type Credentials struct {
+	Address  string
+	User     string
+	Password string
+}
+
+// Build assembles a connection string from the pieces.
+//
+// This exists for one reason: a MongoDB URI is a URL, so a password containing
+// `@`, `:`, `/`, `?`, `#` or `%` has to be percent-encoded inside it. Typed
+// straight into a single address field it is not, and the result is not a
+// helpful error — it is an authentication failure, or a driver parsing the
+// password as a hostname. Passwords out of a manager contain exactly those
+// characters.
+//
+// The escaping is `net/url`'s, never hand-written: it already knows that
+// userinfo escapes `@ : / ? #` and leaves the sub-delimiters alone, and a
+// second implementation of that table would be wrong in some corner nobody
+// tests.
+func Build(c Credentials) (string, Problem) {
+	address := strings.TrimSpace(c.Address)
+	user := strings.TrimSpace(c.User)
+	// Deliberately not trimmed: a leading or trailing space can be part of a
+	// password, and silently dropping it produces a failure nobody can see.
+	password := c.Password
+
+	switch {
+	case address == "":
+		return "", Empty
+	case user == "" && password != "":
+		return "", NoUser
+	}
+
+	parsed, problem := parseAddress(address)
+	if problem != None {
+		return "", problem
+	}
+	if parsed.User != nil && (user != "" || password != "") {
+		return "", CredentialsInAddress
+	}
+	if parsed.Host == "" {
+		return "", NoHost
+	}
+
+	if user != "" {
+		if password == "" {
+			parsed.User = url.User(user)
+		} else {
+			parsed.User = url.UserPassword(user, password)
+		}
+	}
+	return parsed.String(), None
+}
+
+// parseAddress accepts what someone would reasonably type: `host:27017`,
+// `mongodb://host:27017`, or either with options hanging off it.
+func parseAddress(address string) (*url.URL, Problem) {
+	withScheme := address
+	if !strings.Contains(address, "://") {
+		// A bare `host:27017` parses as scheme "host", opaque "27017" — so the
+		// scheme goes on before parsing rather than being detected after.
+		withScheme = "mongodb://" + address
+	}
+
+	if problem := Validate(withScheme); problem != None {
+		return nil, problem
+	}
+	parsed, err := url.Parse(withScheme)
+	if err != nil {
+		return nil, NotMongo
+	}
+	return parsed, None
 }
 
 // DefaultDatabase is used when the user gives a URL and no database name.

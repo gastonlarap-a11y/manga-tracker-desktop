@@ -24,6 +24,75 @@ func client(stdout string, err error, seen *[]string) Client {
 	}
 }
 
+// withInput is answers' counterpart: it records the command line and, apart
+// from it, whatever was handed to the process on stdin.
+func withInput(stdout string, err error, seen *[]string, stdin *string) CommandWithInput {
+	return func(_ context.Context, input string, name string, args ...string) ([]byte, error) {
+		*seen = append(*seen, strings.Join(append([]string{name}, args...), " "))
+		*stdin = input
+		return []byte(stdout), err
+	}
+}
+
+// The assertion this whole change exists for. A credential in the argument
+// list is readable by every process on the machine — `ps` on macOS, Task
+// Manager on Windows — for as long as the command runs. manga-tracker-api holds
+// the same rule for `az` ("never --value, which ps would expose") and this hop
+// was the exception.
+func TestCallWithSecretKeepsTheCredentialOutOfTheCommandLine(t *testing.T) {
+	const credential = "mongodb://reader:hunter2@cluster.example.com:10260/?tls=true"
+	var seen []string
+	var stdin string
+	c := Client{
+		BunPath:      "/opt/app/bun",
+		ScriptPath:   "/opt/app/service.js",
+		RunWithInput: withInput(`{"ok":true,"syncConfigured":true}`, nil, &seen, &stdin),
+	}
+
+	if _, err := c.CallWithSecret(context.Background(), credential, "set-sync", "--db", "mangas"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(seen) != 1 {
+		t.Fatalf("expected one command, got %v", seen)
+	}
+	// Not just the whole string: any recognisable piece of it leaking is the
+	// same failure. "hunter2" alone is enough to be someone's password.
+	for _, fragment := range []string{credential, "hunter2", "reader"} {
+		if strings.Contains(seen[0], fragment) {
+			t.Errorf("%q reached the command line: %q", fragment, seen[0])
+		}
+	}
+	if stdin != credential {
+		t.Errorf("the credential did not reach stdin: %q", stdin)
+	}
+	// The rest of the command still travels normally — the database name is
+	// not a secret, and hiding it would only make this harder to debug.
+	want := "/opt/app/bun run /opt/app/service.js set-sync --db mangas"
+	if seen[0] != want {
+		t.Errorf("expected to run %q, got %q", want, seen[0])
+	}
+}
+
+func TestCallWithSecretSurfacesTheReportedReason(t *testing.T) {
+	// Both entry points share one reply parser; this is what keeps that
+	// refactor from quietly swallowing failures on the newer path.
+	var seen []string
+	var stdin string
+	c := Client{
+		RunWithInput: withInput(
+			`{"ok":false,"error":"no connection string was provided on stdin"}`,
+			errors.New("exit status 1"), &seen, &stdin,
+		),
+	}
+
+	_, err := c.CallWithSecret(context.Background(), "", "set-sync")
+
+	if err == nil || !strings.Contains(err.Error(), "no connection string") {
+		t.Fatalf("expected the CLI's own reason, got %v", err)
+	}
+}
+
 func TestCallRunsTheBundledInterpreter(t *testing.T) {
 	var seen []string
 	c := client(`{"ok":true,"port":5153}`, nil, &seen)

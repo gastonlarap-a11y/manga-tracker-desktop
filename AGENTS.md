@@ -47,8 +47,8 @@ working. It is a control panel, not a runtime.
 - `frontend/wailsjs/` — generated bindings (`wails build`/`wails dev` regenerate them)
 - `internal/browsers/` — which Chromium browsers are installed, and opening **one specific
   one**: someone whose default is Safari still wants the extension in Brave
-- `internal/syncurl/` — refuses a connection string that cannot work, returning a code the
-  window turns into a sentence
+- `internal/syncurl/` — refuses a connection string that cannot work, and **assembles** one out
+  of separately typed fields, returning a code the window turns into a sentence
 - `build/` — icons and platform packaging metadata; `build/bin/` is the output (gitignored)
 - `sources.json` — the commits of the sibling repos a release bundles, and the Bun version.
   Pinned to commits, not `main`: a tag has to be rebuildable, and a broken commit landing in a
@@ -89,6 +89,15 @@ working. It is a control panel, not a runtime.
   exactly the people an update is for. Which is why extraction falls back to **renaming** the
   old tree aside (`runtime.old`, cleared on a later launch) when it cannot delete it: Windows
   allows the rename it denies the unlink.
+- **A credential never goes into a command line.** `CallWithSecret` puts it on the service
+  control's stdin; `Call` is for everything else. An argument is readable by every process on
+  the machine (`ps`, Task Manager) for as long as the command runs, which is the rule
+  manga-tracker-api already holds for `az`. Tests assert the value is absent from the recorded
+  arguments, not merely present on stdin.
+- **A password is percent-encoded by `net/url`, never by hand.** A MongoDB URI is a URL, so a
+  password holding `@`, `:`, `/`, `?`, `#` or `%` breaks one it is pasted into — and the failure
+  is an authentication error, not a parse error, so nothing on screen points at the cause. That
+  is the whole reason `syncurl.Build` exists and why the fields form is the default.
 - **User-facing reasons cross the Go boundary as codes, never as sentences.** Every word
   someone reads is written in `frontend/src`, in one language. A Go error string that reaches
   the screen is technical detail under a sentence the window wrote, not the message itself.
