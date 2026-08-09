@@ -1,59 +1,70 @@
-#app {
-    height: 100vh;
-    text-align: center;
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
 }
 
-#logo {
-    display: block;
-    width: 50%;
-    height: 50%;
-    margin: auto;
-    padding: 10% 0 0;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: 100% 100%;
-    background-origin: content-box;
+/* Deliberately slim: the dashboard is the content, this only says where the
+   window is pointing and gives a way back when the backend restarts. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: #171a21;
+  border-bottom: 1px solid #262b36;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-.result {
-    height: 20px;
-    line-height: 20px;
-    margin: 1.5rem auto;
+.title {
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
-.input-box .btn {
-    width: 60px;
-    height: 30px;
-    line-height: 30px;
-    border-radius: 3px;
-    border: none;
-    margin: 0 0 0 20px;
-    padding: 0 8px;
-    cursor: pointer;
+.where {
+  flex: 1;
+  color: #7b8496;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
 }
 
-.input-box .btn:hover {
-    background-image: linear-gradient(to top, #cfd9df 0%, #e2ebf0 100%);
-    color: #333333;
+.action {
+  background: #232936;
+  color: inherit;
+  border: 1px solid #333b4a;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
 }
 
-.input-box .input {
-    border: none;
-    border-radius: 3px;
-    outline: none;
-    height: 30px;
-    line-height: 30px;
-    padding: 0 10px;
-    background-color: rgba(240, 240, 240, 1);
-    -webkit-font-smoothing: antialiased;
+.action:hover {
+  background: #2c3444;
 }
 
-.input-box .input:hover {
-    border: none;
-    background-color: rgba(255, 255, 255, 1);
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
 }
 
-.input-box .input:focus {
-    border: none;
-    background-color: rgba(255, 255, 255, 1);
+.message {
+  margin: auto;
+  max-width: 34rem;
+  padding: 0 2rem;
+  text-align: center;
+  color: #aeb6c6;
+  line-height: 1.55;
+}
+
+.detail {
+  color: #7b8496;
+  font-size: 0.88rem;
+}
+
+.dashboard {
+  flex: 1;
+  border: 0;
 }
