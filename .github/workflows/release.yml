@@ -160,12 +160,27 @@ jobs:
         run: |
           set -euo pipefail
           wails build -platform darwin/arm64 -trimpath
-          # Not notarised — that needs a paid Apple account — but ad-hoc signed,
-          # which is what keeps Apple Silicon from refusing it outright as
-          # damaged. Gatekeeper still asks once; the README says how.
-          codesign --force --deep --sign - "build/bin/manga-tracker-desktop.app"
-          hdiutil create -volname "Manga Tracker" \
-            -srcfolder "build/bin/manga-tracker-desktop.app" \
+
+          # Wails names the bundle after the project, so it comes out as
+          # manga-tracker-desktop.app. Renaming it is safe — macOS finds the
+          # binary through CFBundleExecutable, not the folder name — and it is
+          # what someone sees in Applications for as long as they keep it.
+          staging="$(mktemp -d)"
+          cp -R "build/bin/manga-tracker-desktop.app" "${staging}/Manga Tracker.app"
+
+          # The alias people drag onto. Without it the disk image opens showing
+          # only the app, with nowhere to drop it — which is not how a Mac
+          # installer looks, and leaves someone guessing.
+          ln -s /Applications "${staging}/Applications"
+
+          # Signed after the copy, because copying a bundle does not carry the
+          # signature reliably. Not notarised — that needs a paid Apple
+          # account — but ad-hoc signed, which is what keeps Apple Silicon from
+          # refusing it outright as damaged. Gatekeeper still asks once.
+          codesign --force --deep --sign - "${staging}/Manga Tracker.app"
+          codesign --verify --deep "${staging}/Manga Tracker.app"
+
+          hdiutil create -volname "Manga Tracker" -srcfolder "$staging" \
             -ov -format UDZO "${{ matrix.artifact }}"
 
       - name: Build the app (Windows)

@@ -9,5 +9,12 @@
   "author": {
     "name": "Gastón Lara P.",
     "email": "292613514+gastonlarap-a11y@users.noreply.github.com"
+  },
+  "info": {
+    "productName": "Manga Tracker",
+    "productVersion": "0.1.0",
+    "companyName": "Gastón Lara P.",
+    "copyright": "© 2026 Gastón Lara P.",
+    "comments": "Registra qué manga y qué capítulo estás leyendo, en tu propia computadora."
   }
 }
