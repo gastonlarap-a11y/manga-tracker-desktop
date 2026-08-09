@@ -14,7 +14,19 @@ type View =
   | { kind: "installable" }
   | { kind: "installing" }
   | { kind: "noPayload" }
+  | { kind: "refused"; message: string }
   | { kind: "failed"; reason: string };
+
+/**
+ * A refusal is the guard working, not a fault, so it reads as an explanation
+ * rather than an error.
+ */
+const REFUSALS: Record<string, string> = {
+  running:
+    "Ya hay un Manga Tracker funcionando en esta computadora, así que no toqué nada.",
+  installed:
+    "Esta computadora ya tiene Manga Tracker instalado, aunque ahora esté detenido. No sobrescribo una instalación existente.",
+};
 
 function App() {
   const [view, setView] = useState<View>({ kind: "looking" });
@@ -38,7 +50,16 @@ function App() {
   const install = useCallback(() => {
     setView({ kind: "installing" });
     void Install()
-      .then((result) => setView({ kind: "connected", baseUrl: result.baseUrl }))
+      .then((outcome) => {
+        if (outcome.refused !== "") {
+          setView({
+            kind: "refused",
+            message: REFUSALS[outcome.refused] ?? outcome.refused,
+          });
+          return;
+        }
+        setView({ kind: "connected", baseUrl: outcome.baseUrl });
+      })
       .catch((reason: unknown) =>
         setView({ kind: "failed", reason: String(reason) }),
       );
@@ -103,6 +124,15 @@ function App() {
               Es una compilación de desarrollo. Para verla funcionar, arrancá el
               backend por tu cuenta, o usá el instalador publicado.
             </p>
+            <button type="button" className="action" onClick={look}>
+              Buscar de nuevo
+            </button>
+          </div>
+        )}
+
+        {view.kind === "refused" && (
+          <div className="message">
+            <p>{view.message}</p>
             <button type="button" className="action" onClick={look}>
               Buscar de nuevo
             </button>

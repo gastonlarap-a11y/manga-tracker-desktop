@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -58,13 +59,37 @@ func (a *App) Look() installer.State {
 	return a.deps.Look(a.ctx)
 }
 
+// InstallOutcome is what the window gets back.
+//
+// A refusal is not a failure and is not reported as one: "there is already an
+// installation here" is the guard doing its job, and an error dialog would
+// describe it as something going wrong. Errors stay for things that actually
+// broke.
+type InstallOutcome struct {
+	installer.Result
+	// Refused is "" when the install went through, otherwise a code the window
+	// turns into a sentence: "running" or "installed".
+	Refused string `json:"refused"`
+}
+
 // Install writes the bundled backend out and registers it with the system, so
 // it starts on its own at every login from then on.
 //
-// It refuses when a backend is already running: overwriting a working service
-// definition is not something a button should do by accident.
-func (a *App) Install() (installer.Result, error) {
-	return a.deps.Install(a.ctx)
+// It refuses when this machine already has Manga Tracker — running or merely
+// registered. Overwriting a working service definition, or the data directory
+// beside it, is not something a button should do by accident.
+func (a *App) Install() (InstallOutcome, error) {
+	result, err := a.deps.Install(a.ctx)
+	switch {
+	case errors.Is(err, installer.ErrAlreadyRunning):
+		return InstallOutcome{Result: result, Refused: "running"}, nil
+	case errors.Is(err, installer.ErrAlreadyInstalled):
+		return InstallOutcome{Result: result, Refused: "installed"}, nil
+	case err != nil:
+		return InstallOutcome{}, err
+	default:
+		return InstallOutcome{Result: result}, nil
+	}
 }
 
 // Settings is everything the configuration screen shows at once.

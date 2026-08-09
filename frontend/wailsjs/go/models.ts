@@ -21,24 +21,6 @@ export namespace browsers {
 
 export namespace installer {
 	
-	export class Result {
-	    baseUrl: string;
-	    port: number;
-	    dataDir: string;
-	    userCanControlIt: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new Result(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.baseUrl = source["baseUrl"];
-	        this.port = source["port"];
-	        this.dataDir = source["dataDir"];
-	        this.userCanControlIt = source["userCanControlIt"];
-	    }
-	}
 	export class State {
 	    kind: string;
 	    baseUrl: string;
@@ -60,6 +42,26 @@ export namespace installer {
 
 export namespace main {
 	
+	export class InstallOutcome {
+	    baseUrl: string;
+	    port: number;
+	    dataDir: string;
+	    userCanControlIt: boolean;
+	    refused: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new InstallOutcome(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.baseUrl = source["baseUrl"];
+	        this.port = source["port"];
+	        this.dataDir = source["dataDir"];
+	        this.userCanControlIt = source["userCanControlIt"];
+	        this.refused = source["refused"];
+	    }
+	}
 	export class Settings {
 	    hasPayload: boolean;
 	    installed: boolean;

@@ -101,14 +101,18 @@ func interpreter() string {
 }
 
 // AppDir is where the backend ends up, and what the service CLI is given.
+//
+// Under `runtime/`, not directly in the data directory: that is where the
+// database and its backups live, and the payload's own directory is the one
+// thing extraction is allowed to delete.
 func (d Deps) AppDir() string {
-	return filepath.Join(d.DataDir, payload.AppSubdir)
+	return filepath.Join(payload.RuntimeDir(d.DataDir), payload.AppSubdir)
 }
 
 // ExtensionDir is the folder to point "Load unpacked" at while the store
 // review is pending.
 func (d Deps) ExtensionDir() string {
-	return filepath.Join(d.DataDir, payload.ExtensionSubdir)
+	return filepath.Join(payload.RuntimeDir(d.DataDir), payload.ExtensionSubdir)
 }
 
 // Look reports what the app should offer.
@@ -125,6 +129,15 @@ func (d Deps) Look(ctx context.Context) State {
 // ErrAlreadyRunning is returned rather than silently reinstalling.
 var ErrAlreadyRunning = errors.New("a backend is already running on this machine")
 
+// ErrAlreadyInstalled covers the case ErrAlreadyRunning misses: a service that
+// is registered but stopped.
+//
+// Looking only for something that answers is not enough. Stopping the service
+// is exactly what someone does in order to try the installer, and at that
+// moment the machine still has a service definition pointing at their real
+// setup — overwriting it is not something a button should do.
+var ErrAlreadyInstalled = errors.New("this machine already has Manga Tracker installed")
+
 // Install extracts the payload and registers the service.
 func (d Deps) Install(ctx context.Context) (Result, error) {
 	// Checked again here, not only in Look: the two are separated by however
@@ -136,8 +149,16 @@ func (d Deps) Install(ctx context.Context) (Result, error) {
 		return Result{}, payload.ErrNoPayload
 	}
 
+	// Safe to do before the check below: extraction only ever writes inside its
+	// own runtime/ directory, and the service control it asks next lives there.
 	if err := d.Extract(d.DataDir); err != nil {
 		return Result{}, err
+	}
+
+	// A registered but stopped service is still an installation. Asked after
+	// extracting because the program that answers this is part of the payload.
+	if status, err := d.Call(ctx, d.AppDir(), "status"); err == nil && status.Installed {
+		return Result{Port: status.Port}, ErrAlreadyInstalled
 	}
 
 	reply, err := d.Call(ctx, d.AppDir(), "install", "--app-dir", d.AppDir(), "--data-dir", d.DataDir)

@@ -110,6 +110,45 @@ func TestExtractSkipsWorkWhenTheVersionMatches(t *testing.T) {
 	}
 }
 
+func TestExtractLeavesTheRestOfTheDataDirectoryAlone(t *testing.T) {
+	// The one that matters. Extraction wipes its destination so a file from an
+	// older version cannot survive an upgrade — and the destination used to be
+	// the data directory itself, which is where the library and every backup
+	// beside it live. Pressing Install would have deleted all of them.
+	dataDir := t.TempDir()
+	library := filepath.Join(dataDir, "mangatracker.db")
+	backup := filepath.Join(dataDir, "mangatracker-pre-merge.db")
+	for _, path := range []string{library, backup} {
+		if err := os.WriteFile(path, []byte("irreplaceable"), 0o644); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+
+	if err := extractFS(fakePayload("v1"), "dist", RuntimeDir(dataDir), "v1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, path := range []string{library, backup} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s did not survive the extraction: %v", filepath.Base(path), err)
+		}
+	}
+	// And a second extraction, which is what an upgrade does, must not either.
+	if err := extractFS(fakePayload("v2"), "dist", RuntimeDir(dataDir), "v2"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(library); err != nil {
+		t.Errorf("the library did not survive an upgrade: %v", err)
+	}
+}
+
+func TestRuntimeDirIsTheOnlyThingOwned(t *testing.T) {
+	// Stated as a test because it is the invariant the whole fix rests on.
+	if RuntimeDir("/data") != filepath.Join("/data", RuntimeSubdir) {
+		t.Errorf("unexpected runtime dir: %s", RuntimeDir("/data"))
+	}
+}
+
 func TestExtractReplacesAnOlderVersion(t *testing.T) {
 	dir := t.TempDir()
 	if err := extractFS(fakePayload("v1"), "dist", dir, "v1"); err != nil {
