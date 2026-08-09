@@ -1,0 +1,201 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 5, 8, 0.6);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 5vh 1.5rem;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.dialog {
+  width: min(40rem, 100%);
+  background: #171a21;
+  border: 1px solid #262b36;
+  border-radius: 14px;
+  padding: 1.4rem 1.5rem 1.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.6rem;
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dialog h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 620;
+}
+
+.dialog h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #8891a5;
+}
+
+.dialog section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* Reused from App.css for prose; here it is left-aligned because these are
+   explanations beside controls, not a centred empty state. */
+.dialog .detail {
+  margin: 0;
+  text-align: left;
+  color: #aeb6c6;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.dialog .bad {
+  color: #e0918f;
+}
+
+.dialog .good {
+  color: #7fd1a3;
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.92rem;
+}
+
+.choice label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0.9rem;
+  border: 1px solid #262b36;
+  border-radius: 10px;
+  background: #12151b;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.field span {
+  font-size: 0.78rem;
+  color: #8891a5;
+}
+
+.field input {
+  background: #0f1115;
+  border: 1px solid #333b4a;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+.field input:focus-visible,
+.action:focus-visible,
+.link:focus-visible {
+  outline: 2px solid #7c74f0;
+  outline-offset: 2px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: #8ea8ff;
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.steps {
+  margin: 0.2rem 0 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  color: #aeb6c6;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.steps code,
+.status code {
+  display: inline-block;
+  background: #0f1115;
+  border: 1px solid #262b36;
+  border-radius: 5px;
+  padding: 1px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.steps code {
+  margin-top: 0.35rem;
+}
+
+.status {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.status dt {
+  color: #8891a5;
+}
+
+.status dd {
+  margin: 0;
+}
+
+/* The gear sits in the top bar; kept quiet so it does not compete with the
+   dashboard behind it. */
+.gear {
+  background: none;
+  border: 0;
+  color: #8891a5;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.gear:hover {
+  color: #e6e9ef;
+  background: #232936;
+}
