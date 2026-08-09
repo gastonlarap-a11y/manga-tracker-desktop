@@ -52,7 +52,14 @@ type Saving =
   // convertedTo is set when what was stored is not what was pasted: a
   // mongodb+srv:// address resolved into its direct form. Saying so beats
   // letting someone find a different string than the one they typed.
-  | { kind: "connected"; usesSrv?: boolean; convertedTo?: string }
+  | {
+      kind: "connected";
+      usesSrv?: boolean;
+      convertedTo?: string;
+      // True when the keystore could not be read at startup on this machine and
+      // the credential had to go into the service's configuration instead.
+      secretInConfig?: boolean;
+    }
   // Saved, but the backend was still restarting when we looked. Kept apart from
   // "failed": telling someone their sync did not connect when it did is worse
   // than telling them to look again in a moment.
@@ -93,6 +100,7 @@ function outcomeOf(outcome: main.SyncOutcome): Saving {
         kind: "connected",
         usesSrv: outcome.usesSrv,
         convertedTo: outcome.converted ? outcome.host : "",
+        secretInConfig: outcome.secretInConfig,
       }
     : { kind: "failed", detail: outcome.lastError };
 }
@@ -262,6 +270,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                     <dt>Base de datos</dt>
                     <dd>
                       <code>{settings.syncDb}</code>
+                    </dd>
+                    <dt>Contraseña</dt>
+                    <dd>
+                      {settings.secretInConfig
+                        ? "en la configuración del servicio (archivo protegido)"
+                        : "en el llavero del sistema"}
                     </dd>
                   </dl>
                   <div className="row">
@@ -458,6 +472,15 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               {saving.kind === "connected" && (
                 <>
                   <p className="detail good">Conectado. Ya está sincronizando.</p>
+                  {saving.secretInConfig === true && (
+                    <p className="detail">
+                      En esta computadora el servicio no puede leer el llavero
+                      del sistema cuando arranca, así que la contraseña quedó
+                      guardada en su archivo de configuración, que sólo tu
+                      usuario puede abrir. Es donde estuvo siempre; el llavero
+                      era la mejora, y acá no se pudo.
+                    </p>
+                  )}
                   {saving.convertedTo !== undefined &&
                     saving.convertedTo !== "" && (
                       <p className="detail">

@@ -283,7 +283,10 @@ func TestPrepareStopsTheServiceBeforeReplacingItsFiles(t *testing.T) {
 	}
 
 	// The whole point is the order: stopped, then written, then started.
-	want := []string{"status", "stop", "extract", "restart"}
+	// `repair` rather than `restart`: an update is also when a machine
+	// installed before the launcher existed gets its service definition
+	// rewritten to point at it.
+	want := []string{"status", "stop", "extract", "repair"}
 	if strings.Join(r.steps, ",") != strings.Join(want, ",") {
 		t.Fatalf("expected %v, got %v", want, r.steps)
 	}
@@ -310,7 +313,7 @@ func TestPrepareSaysSoWhenTheBackendDoesNotComeBack(t *testing.T) {
 	// the app opens on a library that is simply not there.
 	r := newRecorder("", true, installed(), nil)
 	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
-	r.failVerb = "restart"
+	r.failVerb = "repair"
 
 	err := r.deps.Prepare(context.Background())
 

@@ -169,6 +169,7 @@ jobs:
           # missing file. index.js is what payload.Available() looks for.
           for required in \
             internal/payload/dist/app/index.js \
+            internal/payload/dist/app/launch.js \
             internal/payload/dist/app/service.js \
             internal/payload/dist/app/migrations \
             internal/payload/dist/app/public/index.html \

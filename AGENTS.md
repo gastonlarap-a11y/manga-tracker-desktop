@@ -99,6 +99,16 @@ working. It is a control panel, not a runtime.
   times the missing distinction produced a screen that confidently said something untrue, and
   the second one told someone their working sync had failed. Anything answered by asking a
   service that is being restarted needs the third state before it needs anything else.
+- **The credential lives in the system keystore, and the app finds out whether that works.**
+  `set-sync` leaves only a marker in the service's configuration; the bundled launcher reads the
+  real value at startup. Whether a service *can* read its own keystore then is not knowable in
+  advance — a Windows task running as S4U has no password behind it, and user-scope DPAPI
+  derives its key from one — so the app watches whether sync comes up and calls
+  `pin-config-secret` if it did not, putting the credential back in the file and saying so.
+  Never assume the good path worked; watch for it.
+- **An update calls `repair`, not `restart`.** Restarting reloads what is already registered, so
+  a machine installed before the launcher existed would go on starting the server directly. That
+  is the whole migration, and it lives in `Prepare`.
 - **A credential never goes into a command line.** `CallWithSecret` puts it on the service
   control's stdin; `Call` is for everything else. An argument is readable by every process on
   the machine (`ps`, Task Manager) for as long as the command runs, which is the rule
