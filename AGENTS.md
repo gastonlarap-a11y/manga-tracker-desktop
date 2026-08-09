@@ -52,7 +52,11 @@ working. It is a control panel, not a runtime.
 - `build/` — icons and platform packaging metadata; `build/bin/` is the output (gitignored)
 - `sources.json` — the commits of the sibling repos a release bundles, and the Bun version.
   Pinned to commits, not `main`: a tag has to be rebuildable, and a broken commit landing in a
-  sibling repo must not silently ship
+  sibling repo must not silently ship.
+  **A change here that depends on a sibling repo bumps its pin in the same PR.** Three releases
+  in a row needed a follow-up commit for this, each caught only by reading the pin by hand
+  before tagging — and the failure it produces is not a build error but an app that ships and
+  then does not work: the bundled CLI answering a question the app has stopped asking
 
 ## Commands
 - Dev: `wails dev` · Build: `wails build`
