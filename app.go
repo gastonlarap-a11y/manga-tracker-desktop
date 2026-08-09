@@ -158,8 +158,13 @@ func (a *App) Settings() Settings {
 type SyncOutcome struct {
 	// Problem is a code the window turns into a sentence, so every message a
 	// person reads is written in one place: "empty", "srv", "notMongo".
-	Problem   string `json:"problem"`
-	Connected bool   `json:"connected"`
+	Problem string `json:"problem"`
+	// Settled says the backend was asked and answered. Without it, "it did not
+	// connect" and "it was still restarting when I looked" arrived as the same
+	// Connected:false — and the second one is by far the more common, because
+	// saving is what restarts it.
+	Settled   bool `json:"settled"`
+	Connected bool `json:"connected"`
 	// LastError is the backend's own words about why it could not connect.
 	LastError string `json:"lastError"`
 	// UsesSrv warns that the credential in use is a mongodb+srv:// URL, which
@@ -216,18 +221,48 @@ func (a *App) storeSync(url string, database string) (SyncOutcome, error) {
 
 // awaitSync reports whether the configuration that was just written connects.
 //
-// Restarting is asynchronous, so asking once would read the state of the process
-// on its way out.
+// Saving restarts the service, and for a few seconds afterwards nothing is
+// listening: the process that answered a moment ago is on its way out and its
+// replacement has not bound the port yet. So this waits for a backend to exist
+// before asking it anything.
+//
+// Without that wait the first look found nothing and returned an empty outcome,
+// which the window read as "no pudo conectar" — on a sync that had connected
+// perfectly well and was already pushing. Not knowing yet is its own answer,
+// and it is reported as one rather than as a failure.
 func (a *App) awaitSync() (SyncOutcome, error) {
-	state := a.deps.Look(a.ctx)
-	if state.BaseURL == "" {
-		return SyncOutcome{}, nil
+	baseURL := a.waitForBackend(30 * time.Second)
+	if baseURL == "" {
+		return SyncOutcome{Settled: false}, nil
 	}
-	status, err := backend.WaitForSync(a.ctx, a.client, state.BaseURL, 20*time.Second)
+	status, err := backend.WaitForSync(a.ctx, a.client, baseURL, 20*time.Second)
 	if err != nil {
-		return SyncOutcome{}, err
+		return SyncOutcome{Settled: false}, err
 	}
-	return SyncOutcome{Connected: status.Connected, LastError: status.LastError}, nil
+	return SyncOutcome{
+		Settled:   true,
+		Connected: status.Connected,
+		LastError: status.LastError,
+	}, nil
+}
+
+// waitForBackend blocks until something answers on this machine again, or the
+// timeout runs out. Returns "" if it never came back.
+func (a *App) waitForBackend(timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	for {
+		if state := a.deps.Look(a.ctx); state.BaseURL != "" {
+			return state.BaseURL
+		}
+		if time.Now().After(deadline) {
+			return ""
+		}
+		select {
+		case <-a.ctx.Done():
+			return ""
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 // UseStoredSync turns synchronising back on with the credential this machine

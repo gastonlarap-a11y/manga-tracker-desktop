@@ -93,6 +93,12 @@ working. It is a control panel, not a runtime.
   exactly the people an update is for. Which is why extraction falls back to **renaming** the
   old tree aside (`runtime.old`, cleared on a later launch) when it cannot delete it: Windows
   allows the rename it denies the unlink.
+- **"I could not find out" is a state, never a false.** Twice now a boolean has had to grow a
+  companion for it: `Settings.asked` (no service, versus could not ask one) and
+  `SyncOutcome.settled` (it did not connect, versus it was still restarting when I looked). Both
+  times the missing distinction produced a screen that confidently said something untrue, and
+  the second one told someone their working sync had failed. Anything answered by asking a
+  service that is being restarted needs the third state before it needs anything else.
 - **A credential never goes into a command line.** `CallWithSecret` puts it on the service
   control's stdin; `Call` is for everything else. An argument is readable by every process on
   the machine (`ps`, Task Manager) for as long as the command runs, which is the rule

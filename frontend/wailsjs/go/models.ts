@@ -116,6 +116,7 @@ export namespace main {
 	}
 	export class SyncOutcome {
 	    problem: string;
+	    settled: boolean;
 	    connected: boolean;
 	    lastError: string;
 	    usesSrv: boolean;
@@ -127,6 +128,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.problem = source["problem"];
+	        this.settled = source["settled"];
 	        this.connected = source["connected"];
 	        this.lastError = source["lastError"];
 	        this.usesSrv = source["usesSrv"];
