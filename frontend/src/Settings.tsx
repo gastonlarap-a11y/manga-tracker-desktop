@@ -5,6 +5,7 @@ import {
   RevealExtension,
   Settings as LoadSettings,
   SetSync,
+  UseStoredSync,
 } from "../wailsjs/go/main/App";
 import type { main } from "../wailsjs/go/models";
 import "./Settings.css";
@@ -24,7 +25,7 @@ type Saving =
   | { kind: "idle" }
   | { kind: "saving" }
   | { kind: "rejected"; message: string }
-  | { kind: "connected" }
+  | { kind: "connected"; usesSrv?: boolean }
   | { kind: "failed"; detail: string };
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
@@ -66,6 +67,22 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         setSaving({ kind: "failed", detail: String(reason) }),
       );
   }, [url, database, load]);
+
+  const reuse = useCallback(() => {
+    setSaving({ kind: "saving" });
+    void UseStoredSync(database)
+      .then((outcome) => {
+        setSaving(
+          outcome.connected
+            ? { kind: "connected", usesSrv: outcome.usesSrv }
+            : { kind: "failed", detail: outcome.lastError },
+        );
+        load();
+      })
+      .catch((reason: unknown) =>
+        setSaving({ kind: "failed", detail: String(reason) }),
+      );
+  }, [database, load]);
 
   const turnOff = useCallback(() => {
     setSaving({ kind: "saving" });
@@ -116,10 +133,40 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 usar una base de datos propia. Es opcional.
               </p>
 
-              {!settings.installed && (
-                <p className="detail">
-                  Primero hay que instalar Manga Tracker en esta computadora.
+              {settings.problem !== "" ? (
+                <p className="detail bad">
+                  No pude preguntarle al servicio cómo está, así que no sé si
+                  hay sincronización configurada.
+                  <span className="reason"> {settings.problem}</span>
                 </p>
+              ) : (
+                !settings.installed && (
+                  <p className="detail">
+                    Primero hay que instalar Manga Tracker en esta computadora.
+                  </p>
+                )
+              )}
+
+              {settings.hasStoredCredential && !settings.syncConfigured && (
+                <div className="fields">
+                  <p className="detail">
+                    Esta computadora ya tiene guardada una conexión de una
+                    configuración anterior. Podés seguir usándola sin volver a
+                    escribirla.
+                  </p>
+                  <div className="row">
+                    <button
+                      type="button"
+                      className="action primary"
+                      onClick={reuse}
+                      disabled={saving.kind === "saving"}
+                    >
+                      {saving.kind === "saving"
+                        ? "Conectando…"
+                        : "Usar la que ya tenía"}
+                    </button>
+                  </div>
+                </div>
               )}
 
               <div className="choice">
@@ -180,21 +227,34 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                     )}
                   </div>
 
-                  {saving.kind === "rejected" && (
-                    <p className="detail bad">{saving.message}</p>
-                  )}
-                  {saving.kind === "connected" && (
-                    <p className="detail good">Conectado. Ya está sincronizando.</p>
-                  )}
-                  {saving.kind === "failed" && (
+                </div>
+              )}
+
+              {/* Outside the form on purpose: the same outcomes apply whether
+                  the credential was typed or carried over from the keystore. */}
+              {saving.kind === "rejected" && (
+                <p className="detail bad">{saving.message}</p>
+              )}
+              {saving.kind === "connected" && (
+                <>
+                  <p className="detail good">Conectado. Ya está sincronizando.</p>
+                  {saving.usesSrv === true && (
                     <p className="detail bad">
-                      Se guardó, pero no pudo conectar.
-                      {saving.detail !== "" && (
-                        <span className="reason"> {saving.detail}</span>
-                      )}
+                      Ojo: esa dirección empieza con <code>mongodb+srv://</code>.
+                      Acá funciona, pero en Windows nunca va a conectar. Para
+                      usarla en las dos, convertila a la forma directa
+                      (<code>mongodb://servidor:puerto/?tls=true</code>).
                     </p>
                   )}
-                </div>
+                </>
+              )}
+              {saving.kind === "failed" && (
+                <p className="detail bad">
+                  Se guardó, pero no pudo conectar.
+                  {saving.detail !== "" && (
+                    <span className="reason"> {saving.detail}</span>
+                  )}
+                </p>
               )}
             </section>
 
@@ -262,9 +322,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 <dd>
                   {!settings.hasPayload
                     ? "compilación de desarrollo: no incluye el servidor"
-                    : settings.installed
-                      ? `instalado · puerto ${settings.port}`
-                      : "no instalado en esta computadora"}
+                    : !settings.asked
+                      ? "no pude preguntarle"
+                      : settings.installed
+                        ? `instalado · puerto ${settings.port}`
+                        : "no instalado en esta computadora"}
                 </dd>
                 <dt>Datos</dt>
                 <dd>

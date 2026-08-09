@@ -64,12 +64,14 @@ export namespace main {
 	}
 	export class Settings {
 	    hasPayload: boolean;
+	    asked: boolean;
 	    installed: boolean;
 	    port: number;
 	    dataDir: string;
 	    extensionDir: string;
 	    version: string;
 	    syncConfigured: boolean;
+	    hasStoredCredential: boolean;
 	    browsers: browsers.Browser[];
 	    storeUrl: string;
 	    problem: string;
@@ -81,12 +83,14 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.hasPayload = source["hasPayload"];
+	        this.asked = source["asked"];
 	        this.installed = source["installed"];
 	        this.port = source["port"];
 	        this.dataDir = source["dataDir"];
 	        this.extensionDir = source["extensionDir"];
 	        this.version = source["version"];
 	        this.syncConfigured = source["syncConfigured"];
+	        this.hasStoredCredential = source["hasStoredCredential"];
 	        this.browsers = this.convertValues(source["browsers"], browsers.Browser);
 	        this.storeUrl = source["storeUrl"];
 	        this.problem = source["problem"];
@@ -114,6 +118,7 @@ export namespace main {
 	    problem: string;
 	    connected: boolean;
 	    lastError: string;
+	    usesSrv: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SyncOutcome(source);
@@ -124,6 +129,7 @@ export namespace main {
 	        this.problem = source["problem"];
 	        this.connected = source["connected"];
 	        this.lastError = source["lastError"];
+	        this.usesSrv = source["usesSrv"];
 	    }
 	}
 
