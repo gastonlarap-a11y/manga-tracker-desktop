@@ -81,6 +81,14 @@ working. It is a control panel, not a runtime.
   that is plainly there.
 - The payload's version marker is written **last**. A run that dies halfway leaves none, so
   the next launch extracts again instead of trusting a half-written tree.
+- **An update is `stop` → extract → `restart`, in that order**, and it happens at startup, not
+  behind a button. The backend is a service running out of the tree being replaced: Windows
+  will not unlink a running executable, and on both systems it would otherwise keep executing
+  the old code until the next login. `stop` failing is *not* fatal — a payload shipped before
+  that command existed answers "unknown command", and refusing to update then would strand
+  exactly the people an update is for. Which is why extraction falls back to **renaming** the
+  old tree aside (`runtime.old`, cleared on a later launch) when it cannot delete it: Windows
+  allows the rename it denies the unlink.
 - **User-facing reasons cross the Go boundary as codes, never as sentences.** Every word
   someone reads is written in `frontend/src`, in one language. A Go error string that reaches
   the screen is technical detail under a sentence the window wrote, not the message itself.

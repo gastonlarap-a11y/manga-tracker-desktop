@@ -7,8 +7,46 @@ extension in developer mode. That is not something you can hand to a friend.
 
 This app replaces all of it with **one download**.
 
-> **Status.** The window works: it finds the backend running on this machine and shows the
-> dashboard. The installer and the settings screen are not written yet — see `AGENTS.md`.
+## Install it
+
+**→ [Latest release](https://github.com/gastonlarap-a11y/manga-tracker-desktop/releases/latest)**
+
+| System | File | First run |
+|---|---|---|
+| **macOS** (Apple Silicon — M1 or newer) | `Manga-Tracker-macOS-AppleSilicon.dmg` | Open it, drag **Manga Tracker** onto **Applications**. macOS cannot verify the developer: System Settings → Privacy & Security → **Open Anyway**. Once per machine. |
+| **Windows 10/11** (64-bit) | `Manga-Tracker-Windows-Setup.exe` | Run it. SmartScreen: **More info** → **Run anyway**. |
+
+Neither is signed with a paid certificate, and neither store is used: both charge recurring
+fees for what is a personal project. macOS is Apple Silicon only — the database driver is
+per architecture, and building for a machine nobody involved owns would double what has to be
+verified.
+
+Opening it is the whole setup. It writes the backend out, registers it with the system and
+waits until it answers; from then on it starts at every login on its own. There is no account
+and nothing to configure.
+
+The browser extension is the one piece that is not automatic — it lives in the browser, not on
+disk. The gear icon installs it, or walks through loading it unpacked while the store review is
+pending. Full walkthrough:
+[manga-tracker-extension](https://github.com/gastonlarap-a11y/manga-tracker-extension#testing-it-end-to-end-about-five-minutes).
+
+### Updating
+
+Install the new version over the old one — there is nothing to uninstall. Open the app
+afterwards: it notices the backend beside it is a version behind, stops it, replaces it and
+starts it again. Your library is untouched; it lives outside the directory that gets replaced.
+
+## Where your data lives
+
+In one SQLite file on your own computer, under the application-support directory the settings
+screen shows. That is the only copy the app needs, and everything works with nothing else
+configured.
+
+**Syncing to a database of your own is optional and off by default.** Its purpose is having the
+same library on two computers, and a copy that survives losing one of them. It is a MongoDB-
+compatible connection *you* own — the app never has a server of its own to offer. Even with it
+on, SQLite still answers every read and write: sync is a background convergence, never
+something a page waits for, so it cannot make the library depend on connectivity.
 
 ## How the pieces fit
 
@@ -56,18 +94,11 @@ Wails v2 is deliberate: v3 is still in alpha, and this app does not need anythin
 Because the backend runs as a system service, the app's job is small enough for the stable
 line.
 
-## Installing a release
+## Why the warnings, in detail
 
-The app is **not signed** with a paid certificate, so both systems warn the first time. Once
-per machine:
-
-- **macOS** — the build is ad-hoc signed (`codesign -s -`, which Wails does automatically),
-  so it does not fail with "the app is damaged" on Apple Silicon. Gatekeeper still asks:
-  System Settings → Privacy & Security → **Open anyway**.
-- **Windows** — SmartScreen: **More info** → **Run anyway**.
-
-Neither store is used: the Mac App Store and Microsoft Store both charge recurring fees for
-what is a personal project.
+The macOS build is ad-hoc signed (`codesign -s -`, which Wails does automatically), so Apple
+Silicon does not refuse it outright as damaged — but it is not notarised, which needs a paid
+Apple account, so Gatekeeper still asks once. Windows SmartScreen asks for the same reason.
 
 ## License
 
