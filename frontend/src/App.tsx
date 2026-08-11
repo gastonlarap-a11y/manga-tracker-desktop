@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Install, Look, OpenChapter } from "../wailsjs/go/main/App";
+import {
+  Install,
+  Look,
+  OpenChapter,
+  StartService,
+} from "../wailsjs/go/main/App";
 import { SettingsDialog } from "./Settings";
 import "./App.css";
 
@@ -19,6 +24,11 @@ type View =
   | { kind: "connected"; baseUrl: string }
   | { kind: "installable" }
   | { kind: "installing" }
+  // Installed, but nothing answered: restarting after an update, or stopped.
+  | { kind: "stopped" }
+  | { kind: "starting" }
+  // Nothing answered and the service could not be asked either.
+  | { kind: "unknown" }
   | { kind: "noPayload" }
   | { kind: "refused"; message: string }
   | { kind: "failed"; reason: string };
@@ -78,11 +88,24 @@ function App() {
         setView({ kind: "connected", baseUrl: state.baseUrl });
       } else if (state.kind === "installable") {
         setView({ kind: "installable" });
+      } else if (state.kind === "stopped") {
+        setView({ kind: "stopped" });
+      } else if (state.kind === "unknown") {
+        setView({ kind: "unknown" });
       } else {
         setView({ kind: "noPayload" });
       }
     });
   }, []);
+
+  const start = useCallback(() => {
+    setView({ kind: "starting" });
+    void StartService()
+      .then(look)
+      .catch((reason: unknown) =>
+        setView({ kind: "failed", reason: String(reason) }),
+      );
+  }, [look]);
 
   useEffect(look, [look]);
 
@@ -154,6 +177,45 @@ function App() {
 
         {view.kind === "installing" && (
           <p className="message">Instalando y arrancando el servicio…</p>
+        )}
+
+        {view.kind === "stopped" && (
+          <div className="message">
+            <p>Manga Tracker está instalado, pero ahora mismo no responde.</p>
+            <p className="detail">
+              Puede estar reiniciándose después de una actualización. Si acabás
+              de actualizar, esperá unos segundos y buscá de nuevo. Si no,
+              arrancalo desde acá: tu biblioteca y tu configuración quedan como
+              están.
+            </p>
+            <div className="row">
+              <button type="button" className="action primary" onClick={start}>
+                Arrancar el servicio
+              </button>
+              <button type="button" className="action" onClick={look}>
+                Buscar de nuevo
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view.kind === "starting" && (
+          <p className="message">Arrancando el servicio…</p>
+        )}
+
+        {view.kind === "unknown" && (
+          <div className="message">
+            <p>No pude averiguar si Manga Tracker está instalado.</p>
+            <p className="detail">
+              No respondió nada, y tampoco pude preguntarle al servicio. No te
+              ofrezco instalarlo porque no sé qué hay en esta computadora, y
+              reinstalar encima de una instalación que funciona borraría su
+              configuración.
+            </p>
+            <button type="button" className="action" onClick={look}>
+              Buscar de nuevo
+            </button>
+          </div>
         )}
 
         {view.kind === "noPayload" && (

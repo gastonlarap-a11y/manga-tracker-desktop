@@ -23,4 +23,6 @@ export function SetSyncFields(arg1:string,arg2:string,arg3:string,arg4:string):P
 
 export function Settings():Promise<main.Settings>;
 
+export function StartService():Promise<void>;
+
 export function UseStoredSync(arg1:string):Promise<main.SyncOutcome>;

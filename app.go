@@ -446,6 +446,20 @@ func (a *App) RevealExtension() error {
 	return browsers.Reveal(a.deps.ExtensionDir())
 }
 
+// StartService brings back a backend that is installed but not answering.
+//
+// The action the "stopped" screen offers, because looking again is no use when
+// the service really is down. `repair` rather than `restart` for the reason
+// stated in AGENTS.md: restarting only reloads what is already registered,
+// while repair also re-registers a definition written by an older version. It
+// keeps the port and the sync settings it finds.
+func (a *App) StartService() error {
+	_, err := a.deps.Call(
+		a.ctx, a.deps.AppDir(), "repair", "--app-dir", a.deps.AppDir(), "--data-dir", a.deps.DataDir,
+	)
+	return err
+}
+
 // SetChapterBrowser remembers which browser opens a chapter link. An empty id
 // means the system default.
 //

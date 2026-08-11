@@ -107,12 +107,21 @@ working. It is a control panel, not a runtime.
   exactly the people an update is for. Which is why extraction falls back to **renaming** the
   old tree aside (`runtime.old`, cleared on a later launch) when it cannot delete it: Windows
   allows the rename it denies the unlink.
-- **"I could not find out" is a state, never a false.** Twice now a boolean has had to grow a
-  companion for it: `Settings.asked` (no service, versus could not ask one) and
-  `SyncOutcome.settled` (it did not connect, versus it was still restarting when I looked). Both
-  times the missing distinction produced a screen that confidently said something untrue, and
-  the second one told someone their working sync had failed. Anything answered by asking a
-  service that is being restarted needs the third state before it needs anything else.
+- **"I could not find out" is a state, never a false.** Three times now a boolean has had to
+  grow a companion for it: `Settings.asked` (no service, versus could not ask one),
+  `SyncOutcome.settled` (it did not connect, versus it was still restarting when I looked), and
+  `Look` (nothing answered, versus nothing is installed — see below). Every time, the missing
+  distinction produced a screen that confidently said something untrue: the second told someone
+  their working sync had failed, and the third offered to install over a configured machine.
+  Anything answered by asking a service that is being restarted needs the third state before it
+  needs anything else.
+- **`Look` probing the port is not enough to say a machine has nothing.** A backend restarting
+  after an update answers nothing for a second, and that used to come back as
+  `KindInstallable` — "Todavía no está instalado en esta computadora" — over a real
+  installation with sync configured. `Install`'s own guard caught it, so the app contradicted
+  itself across two screens: not installed, then already installed. The probe coming back empty
+  now asks the service control before concluding anything: registered is `KindStopped` (with a
+  button that starts it), and could-not-ask is `KindUnknown`, which offers no install at all.
 - **The credential lives in the system keystore, and the app finds out whether that works.**
   `set-sync` leaves only a marker in the service's configuration; the bundled launcher reads the
   real value at startup. Whether a service *can* read its own keystore then is not knowable in

@@ -33,8 +33,23 @@ type Kind string
 const (
 	// KindRunning — a backend answered. Nothing to do.
 	KindRunning Kind = "running"
-	// KindInstallable — nothing answered, and this build carries a payload.
+	// KindInstallable — nothing answered, and no service is registered either.
+	// Only then is there really nothing here.
 	KindInstallable Kind = "installable"
+	// KindStopped — nothing answered, but this machine has a service. Its
+	// backend is installed and is between states: restarting after an update,
+	// or stopped.
+	//
+	// It exists because "nothing answered" was read as "nothing is installed",
+	// and the window offered to install over a working setup. The installer's
+	// own guard caught it, so the app contradicted itself in two screens —
+	// first that it was not installed, then that it was.
+	KindStopped Kind = "stopped"
+	// KindUnknown — nothing answered and the service control could not be
+	// asked either, so whether anything is installed is not known. The third
+	// state, for the same reason Settings.asked has one: a transient failure
+	// must not read as a fresh machine.
+	KindUnknown Kind = "unknown"
 	// KindNoPayload — a development build. It cannot install, which is not a
 	// fault, and saying so beats offering a button that fails.
 	KindNoPayload Kind = "noPayload"
@@ -189,12 +204,25 @@ func (d Deps) Prepare(ctx context.Context) error {
 }
 
 // Look reports what the app should offer.
+//
+// Nothing answering is not the same as nothing being installed, and it took
+// offering someone a fresh install over their configured backend to make that
+// concrete: the service was registered and merely restarting after an update.
+// So when the probe comes back empty, the service control is asked before any
+// conclusion is drawn.
 func (d Deps) Look(ctx context.Context) State {
 	if baseURL := d.Discover(ctx); baseURL != "" {
 		return State{Kind: KindRunning, BaseURL: baseURL, Version: payload.Version()}
 	}
 	if !d.Available() {
 		return State{Kind: KindNoPayload, Version: payload.Version()}
+	}
+	status, err := d.Call(ctx, d.AppDir(), "status")
+	if err != nil {
+		return State{Kind: KindUnknown, Version: payload.Version()}
+	}
+	if status.Installed {
+		return State{Kind: KindStopped, Version: payload.Version()}
 	}
 	return State{Kind: KindInstallable, Version: payload.Version()}
 }
