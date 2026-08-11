@@ -9,10 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+
 	"manga-tracker-desktop/internal/backend"
 	"manga-tracker-desktop/internal/browsers"
 	"manga-tracker-desktop/internal/installer"
 	"manga-tracker-desktop/internal/payload"
+	"manga-tracker-desktop/internal/prefs"
 	"manga-tracker-desktop/internal/servicecli"
 	"manga-tracker-desktop/internal/syncurl"
 )
@@ -136,6 +139,15 @@ type Settings struct {
 	SecretInConfig bool               `json:"secretInConfig"`
 	Browsers       []browsers.Browser `json:"browsers"`
 	StoreURL       string             `json:"storeUrl"`
+	// ChapterBrowser is the browser a chapter link opens in, as an id from
+	// Browsers; empty means the system default.
+	//
+	// ChapterBrowserKnown separates that empty from a preferences file that
+	// could not be read — the same rule as Asked and SyncLive.Asked. Presenting
+	// "the system default" to someone who did choose would be the screen
+	// stating something untrue.
+	ChapterBrowser      string `json:"chapterBrowser"`
+	ChapterBrowserKnown bool   `json:"chapterBrowserKnown"`
 	// Set when the service is there and still could not be asked — a real
 	// fault, shown as technical detail under a sentence the window writes.
 	Problem string `json:"problem"`
@@ -163,6 +175,12 @@ func (a *App) Settings() Settings {
 		Version:      payload.Version(),
 		Browsers:     browsers.Detect(),
 		StoreURL:     StoreURL,
+	}
+	// Read before the payload check below: which browser opens a chapter is a
+	// choice a development build can make too.
+	if stored, err := prefs.Load(a.deps.DataDir); err == nil {
+		settings.ChapterBrowser = stored.BrowserID
+		settings.ChapterBrowserKnown = true
 	}
 	// Asking a service control that was never written out only produces an
 	// exec error, which says nothing anyone can act on.
@@ -422,10 +440,50 @@ func (a *App) OpenInBrowser(id string) error {
 	return browsers.Open(id, StoreURL)
 }
 
-// RevealExtension opens the folder to point "Load unpacked" at, for while the
-// store review is pending.
+// RevealExtension opens the folder to point "Load unpacked" at, for a
+// development build or a copy loaded by hand.
 func (a *App) RevealExtension() error {
 	return browsers.Reveal(a.deps.ExtensionDir())
+}
+
+// SetChapterBrowser remembers which browser opens a chapter link. An empty id
+// means the system default.
+//
+// Refuses an id no longer among the installed browsers rather than storing it:
+// a preference pointing at a browser that is not there would silently do
+// nothing every time it was used.
+func (a *App) SetChapterBrowser(id string) error {
+	if id != "" && !browsers.Installed(id) {
+		return errors.New("unknown-browser")
+	}
+	return prefs.Save(a.deps.DataDir, prefs.Prefs{BrowserID: id})
+}
+
+// OpenChapter opens a chapter link from the embedded dashboard in a real
+// browser.
+//
+// The one route by which a URL from the iframe reaches this machine, so the
+// scheme is checked here and nowhere else. The frame is served by the backend,
+// but a page it renders can still carry any href, and `javascript:` or `file:`
+// must not be handed to the system.
+//
+// Preference first, because the extension lives in one specific browser and a
+// chapter opened anywhere else records nothing — which is the entire point of
+// the app. The system default is the fallback rather than a failure: not
+// opening at all is worse than opening in the wrong place, and the settings
+// screen already lists the browsers actually found.
+func (a *App) OpenChapter(link string) error {
+	if !browsers.IsWebURL(link) {
+		return errors.New("bad-url")
+	}
+	stored, err := prefs.Load(a.deps.DataDir)
+	if err == nil && stored.BrowserID != "" {
+		if err := browsers.Open(stored.BrowserID, link); err == nil {
+			return nil
+		}
+	}
+	runtime.BrowserOpenURL(a.ctx, link)
+	return nil
 }
 
 func (a *App) service(args ...string) (servicecli.Reply, error) {

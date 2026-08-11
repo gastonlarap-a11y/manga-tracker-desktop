@@ -96,6 +96,8 @@ export namespace main {
 	    secretInConfig: boolean;
 	    browsers: browsers.Browser[];
 	    storeUrl: string;
+	    chapterBrowser: string;
+	    chapterBrowserKnown: boolean;
 	    problem: string;
 	
 	    static createFrom(source: any = {}) {
@@ -119,6 +121,8 @@ export namespace main {
 	        this.secretInConfig = source["secretInConfig"];
 	        this.browsers = this.convertValues(source["browsers"], browsers.Browser);
 	        this.storeUrl = source["storeUrl"];
+	        this.chapterBrowser = source["chapterBrowser"];
+	        this.chapterBrowserKnown = source["chapterBrowserKnown"];
 	        this.problem = source["problem"];
 	    }
 	

@@ -8,6 +8,7 @@ package browsers
 
 import (
 	"errors"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,6 +101,32 @@ var ErrUnknownBrowser = errors.New("that browser is not installed on this machin
 // Open launches a URL in one specific browser.
 func Open(id, url string) error {
 	return openWith(Detect(), id, url, launch)
+}
+
+// Installed reports whether an id names a browser found on this machine.
+func Installed(id string) bool {
+	for _, b := range Detect() {
+		if b.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// IsWebURL reports whether a URL is safe to hand to the operating system.
+//
+// The gate on everything arriving from the embedded dashboard: that page is
+// served by the local backend, but any page it renders can carry any href, and
+// `javascript:`, `file:` or `data:` must never reach a shell command. Only
+// http and https describe a page a browser should be asked to fetch.
+func IsWebURL(raw string) bool {
+	parsed, err := neturl.Parse(raw)
+	if err != nil {
+		return false
+	}
+	// Parse accepts a bare path ("/etc/passwd") with an empty scheme, and a
+	// scheme alone with no host ("https://") — neither addresses a page.
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
 func openWith(found []Browser, id, url string, run func(path, url string) error) error {

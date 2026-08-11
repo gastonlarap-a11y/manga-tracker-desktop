@@ -49,6 +49,10 @@ working. It is a control panel, not a runtime.
   one**: someone whose default is Safari still wants the extension in Brave
 - `internal/syncurl/` — refuses a connection string that cannot work, and **assembles** one out
   of separately typed fields, returning a code the window turns into a sentence
+- `internal/prefs/` — what the window remembers between runs (today: which browser opens a
+  chapter), as a JSON file beside the database. Not in the payload tree, which an update
+  replaces wholesale. A missing file is the zero value and no error; a file that is there and
+  unreadable is an error, because those are different states
 - `build/` — icons and platform packaging metadata; `build/bin/` is the output (gitignored)
 - `sources.json` — the commits of the sibling repos a release bundles, and the Bun version.
   Pinned to commits, not `main`: a tag has to be rebuildable, and a broken commit landing in a
@@ -78,8 +82,18 @@ working. It is a control panel, not a runtime.
 - **The backend's port is not 5150 by convention.** The installer picks a free port in
   **5150-5159** — the range the extension probes — and writes it into the service's
   environment. Widening the range means changing it in the extension too.
-- The extension's Web Store URL is **configuration, not code**, so the day Google approves
-  it the app switches to one-click installation without shipping a new version.
+- The extension's Web Store URL is **configuration, not code**. It was approved on
+  2026-08-10, and holding the id in `StoreURL` is what let the one-click button start working
+  without shipping a new version. The manual "load unpacked" path stays for development
+  builds — as that, not as "the review is pending".
+- **A link from the embedded dashboard never reaches the system from the iframe.** It crosses
+  into Go through `OpenChapter`, which is where the scheme is checked (a page can carry any
+  href, and `javascript:` must not be handed to the OS) and where the browser is chosen.
+  Wails 2.12 implements no new-window handler on either platform — no
+  `createWebViewWithConfiguration:`, nothing subscribed to `NewWindowRequested` — so
+  `target="_blank"` inside that frame did nothing at all; the dashboard cancels the click and
+  posts the URL up instead. And the browser has to be *chosen*: opening the system default
+  can mean opening where the extension is not, and a chapter read there records nothing.
 - **`go:embed` does not keep permissions.** Everything comes back read-only, so the extracted
   Bun is chmod'ed explicitly — without it the install fails with "permission denied" on a file
   that is plainly there.

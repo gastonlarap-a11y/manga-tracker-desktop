@@ -3,6 +3,7 @@ import {
   ClearSync,
   OpenInBrowser,
   RevealExtension,
+  SetChapterBrowser,
   Settings as LoadSettings,
   SetSync,
   SetSyncFields,
@@ -548,7 +549,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 className="link"
                 onClick={() => setManualOpen(!manualOpen)}
               >
-                {manualOpen ? "▾" : "▸"} Todavía no está aprobada: cargarla a mano
+                {manualOpen ? "▾" : "▸"} Cargar una copia local en vez de la
+                publicada
               </button>
               {manualOpen && (
                 <ol className="steps">
@@ -573,6 +575,46 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                   </li>
                 </ol>
               )}
+            </section>
+
+            <section>
+              <h3>Con qué navegador abrir tus mangas</h3>
+              <p className="detail">
+                Conviene el mismo donde instalaste la extensión: si un capítulo
+                se abre en otro, esa lectura no queda registrada.
+              </p>
+              {!settings.chapterBrowserKnown ? (
+                <p className="detail reason">
+                  No pude leer tu preferencia guardada, así que no sé cuál
+                  elegiste. Volvé a elegir uno acá abajo.
+                </p>
+              ) : null}
+              <select
+                className="action"
+                value={settings.chapterBrowser}
+                onChange={(event) => {
+                  const chosen = event.target.value;
+                  void SetChapterBrowser(chosen).then(load);
+                }}
+              >
+                <option value="">El navegador por defecto del sistema</option>
+                {settings.browsers.map((browser) => (
+                  <option key={browser.id} value={browser.id}>
+                    {browser.name}
+                  </option>
+                ))}
+                {/* The browser was uninstalled since it was chosen. Listed, or
+                    the box would quietly read "por defecto del sistema" while
+                    the stored preference still says otherwise. */}
+                {settings.chapterBrowser !== "" &&
+                !settings.browsers.some(
+                  (browser) => browser.id === settings.chapterBrowser,
+                ) ? (
+                  <option value={settings.chapterBrowser}>
+                    {settings.chapterBrowser} (ya no está instalado)
+                  </option>
+                ) : null}
+              </select>
             </section>
 
             <section>

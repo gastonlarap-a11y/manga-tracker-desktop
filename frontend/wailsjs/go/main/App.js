@@ -14,12 +14,20 @@ export function Look() {
   return window['go']['main']['App']['Look']();
 }
 
+export function OpenChapter(arg1) {
+  return window['go']['main']['App']['OpenChapter'](arg1);
+}
+
 export function OpenInBrowser(arg1) {
   return window['go']['main']['App']['OpenInBrowser'](arg1);
 }
 
 export function RevealExtension() {
   return window['go']['main']['App']['RevealExtension']();
+}
+
+export function SetChapterBrowser(arg1) {
+  return window['go']['main']['App']['SetChapterBrowser'](arg1);
 }
 
 export function SetSync(arg1, arg2) {

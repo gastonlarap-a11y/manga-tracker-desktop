@@ -9,9 +9,13 @@ export function Install():Promise<main.InstallOutcome>;
 
 export function Look():Promise<installer.State>;
 
+export function OpenChapter(arg1:string):Promise<void>;
+
 export function OpenInBrowser(arg1:string):Promise<void>;
 
 export function RevealExtension():Promise<void>;
+
+export function SetChapterBrowser(arg1:string):Promise<void>;
 
 export function SetSync(arg1:string,arg2:string):Promise<main.SyncOutcome>;
 
