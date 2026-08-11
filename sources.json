@@ -10,7 +10,7 @@
   },
   "extension": {
     "repository": "gastonlarap-a11y/manga-tracker-extension",
-    "commit": "21ea0c2bcacf0958eb0be65b2a4eca295954ad87"
+    "commit": "ea0867b314cb4d7d17f1fbf4e86216ab7b2dcf49"
   },
   "bun": {
     "version": "1.3.14"
