@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
-import { Install, Look } from "../wailsjs/go/main/App";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Install, Look, OpenChapter } from "../wailsjs/go/main/App";
 import { SettingsDialog } from "./Settings";
 import "./App.css";
+
+// The two halves of the link bridge, matching src/lib/embed.ts in
+// manga-tracker-dashboard. The dashboard installs nothing until it is greeted,
+// so an embedder that never says hello gets the plain browser behaviour.
+const EMBED_HELLO = "manga-tracker:embed-hello";
+const OPEN_EXTERNAL = "manga-tracker:open-external";
 
 /**
  * What the window is showing. A union rather than a pile of booleans:
@@ -31,6 +37,39 @@ const REFUSALS: Record<string, string> = {
 function App() {
   const [view, setView] = useState<View>({ kind: "looking" });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const frame = useRef<HTMLIFrameElement>(null);
+
+  // Chapter links inside the dashboard are cross-origin `target="_blank"`
+  // anchors, and Wails implements no handler for a new-window request: the
+  // click did nothing at all. The dashboard forwards them here instead.
+  const embedOrigin = view.kind === "connected" ? new URL(view.baseUrl).origin : null;
+  useEffect(() => {
+    if (embedOrigin === null) {
+      return;
+    }
+    const onMessage = (event: MessageEvent) => {
+      // Only the frame we are showing gets to ask this window to open things.
+      if (event.origin !== embedOrigin) {
+        return;
+      }
+      const data: unknown = event.data;
+      if (
+        typeof data !== "object" ||
+        data === null ||
+        (data as { type?: unknown }).type !== OPEN_EXTERNAL
+      ) {
+        return;
+      }
+      const url = (data as { url?: unknown }).url;
+      if (typeof url !== "string") {
+        return;
+      }
+      // The scheme is validated on the Go side, in one place.
+      void OpenChapter(url);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [embedOrigin]);
 
   const look = useCallback(() => {
     setView({ kind: "looking" });
@@ -154,9 +193,19 @@ function App() {
           // same-origin with its own API — no CORS involved, and no copy of the
           // dashboard shipped in this app that could fall out of date.
           <iframe
+            ref={frame}
             className="dashboard"
             src={view.baseUrl}
             title="Manga Tracker"
+            onLoad={() => {
+              // The greeting that turns the dashboard's link bridge on. Here
+              // the target origin is exact and known, unlike the reply: this
+              // window is `wails://wails/`, which is not a usable targetOrigin.
+              frame.current?.contentWindow?.postMessage(
+                { type: EMBED_HELLO },
+                new URL(view.baseUrl).origin,
+              );
+            }}
           />
         )}
       </main>

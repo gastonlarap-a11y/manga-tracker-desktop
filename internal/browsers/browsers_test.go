@@ -103,3 +103,31 @@ func TestOpenRefusesABrowserThatIsNotInstalled(t *testing.T) {
 		t.Errorf("expected ErrUnknownBrowser, got %v", err)
 	}
 }
+
+func TestIsWebURL(t *testing.T) {
+	// The gate on everything the embedded dashboard forwards: that page is
+	// served locally, but any page it renders can carry any href.
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{name: "a chapter link", url: "https://lectorxd.com/manhua/dragona/leer/56", want: true},
+		{name: "plain http", url: "http://127.0.0.1:5150/manga/dragona", want: true},
+		{name: "script", url: "javascript:alert(1)", want: false},
+		{name: "local file", url: "file:///etc/passwd", want: false},
+		{name: "inline data", url: "data:text/html,<h1>hi</h1>", want: false},
+		{name: "mail", url: "mailto:alguien@example.com", want: false},
+		{name: "a bare path", url: "/etc/passwd", want: false},
+		{name: "a scheme with no host", url: "https://", want: false},
+		{name: "empty", url: "", want: false},
+		{name: "unparseable", url: "http://a b c", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := IsWebURL(test.url); got != test.want {
+				t.Errorf("IsWebURL(%q) = %v, want %v", test.url, got, test.want)
+			}
+		})
+	}
+}
