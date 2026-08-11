@@ -93,6 +93,30 @@ func TestLookOffersToInstallWhenNothingAnswers(t *testing.T) {
 	}
 }
 
+func TestLookSaysStoppedWhenTheServiceIsThereButSilent(t *testing.T) {
+	// The regression this whole state exists for: a backend restarting after
+	// an update answers nothing for a moment, and the window used to offer a
+	// fresh install over a configured machine. The installer's guard caught
+	// it, so the app said "not installed" and then "already installed".
+	r := newRecorder("", true, installed(), nil)
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+
+	if kind := r.deps.Look(context.Background()).Kind; kind != KindStopped {
+		t.Errorf("expected stopped, got %q", kind)
+	}
+}
+
+func TestLookSaysUnknownWhenItCouldNotAsk(t *testing.T) {
+	// Not knowing is its own answer. Reporting installable here would turn a
+	// transient failure into an offer to overwrite whatever is on the machine.
+	r := newRecorder("", true, installed(), nil)
+	r.failVerb = "status"
+
+	if kind := r.deps.Look(context.Background()).Kind; kind != KindUnknown {
+		t.Errorf("expected unknown, got %q", kind)
+	}
+}
+
 func TestLookSaysADevelopmentBuildCannotInstall(t *testing.T) {
 	// Better than showing a button that fails: `wails dev` carries no payload,
 	// and that is a build choice, not a fault.

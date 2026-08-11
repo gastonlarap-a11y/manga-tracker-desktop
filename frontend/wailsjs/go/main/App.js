@@ -42,6 +42,10 @@ export function Settings() {
   return window['go']['main']['App']['Settings']();
 }
 
+export function StartService() {
+  return window['go']['main']['App']['StartService']();
+}
+
 export function UseStoredSync(arg1) {
   return window['go']['main']['App']['UseStoredSync'](arg1);
 }
