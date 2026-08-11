@@ -206,6 +206,20 @@ jobs:
           codesign --force --deep --sign - "${staging}/Manga Tracker.app"
           codesign --verify --deep "${staging}/Manga Tracker.app"
 
+          # Everything below is dead weight by now, and hdiutil needs room for
+          # a compressed image on top of the two copies of a ~92 MB app that
+          # already exist. Twice a release has built and signed cleanly only to
+          # die here with "No space left on device" — the worst possible place
+          # to find out, since every expensive step has already run.
+          #
+          # The three sibling checkouts are the bulk of it: each carries its own
+          # node_modules from the builds above, and none is read again. The
+          # payload is already inside the compiled binary, and build/bin holds
+          # the app the staging tree was copied from.
+          df -h / | tail -1
+          rm -rf sources internal/payload/dist build/bin
+          df -h / | tail -1
+
           hdiutil create -volname "Manga Tracker" -srcfolder "$staging" \
             -ov -format UDZO "${{ matrix.artifact }}"
 
