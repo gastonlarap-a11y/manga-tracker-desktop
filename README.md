@@ -14,7 +14,7 @@ This app replaces all of it with **one download**.
 | System | File | First run |
 |---|---|---|
 | **macOS** (Apple Silicon — M1 or newer) | `Manga-Tracker-macOS-AppleSilicon.dmg` | Open it, drag **Manga Tracker** onto **Applications**. macOS cannot verify the developer: System Settings → Privacy & Security → **Open Anyway**. Once per machine. |
-| **Windows 10/11** (64-bit) | `Manga-Tracker-Windows-Setup.exe` | Run it. SmartScreen: **More info** → **Run anyway**. |
+| **Windows 10/11** (64-bit) | `Manga-Tracker-Windows-Setup.exe` | Run it — it installs for your user and asks for no administrator prompt. Windows may still block it, in one of [three ways](#why-the-warnings-in-detail), and only one of them offers **Run anyway**. |
 
 Neither is signed with a paid certificate, and neither store is used: both charge recurring
 fees for what is a personal project. macOS is Apple Silicon only — the database driver is
@@ -55,7 +55,7 @@ something a page waits for, so it cannot make the library depend on connectivity
 | Backend (`manga-tracker-api`) | User's data directory | **A system service** — launchd on macOS, Task Scheduler on Windows |
 | Dashboard (`manga-tracker-dashboard`) | Served by the backend | Shown inside this app's window |
 | Extension (`manga-tracker-extension`) | The user's browsers | Installed from the Chrome Web Store, or guided step by step |
-| This app | `/Applications` or `Program Files` | The user, when they want to look at something |
+| This app | `/Applications`, or `%LOCALAPPDATA%\Programs` on Windows | The user, when they want to look at something |
 
 The backend is **not** a child process of this app. If it were, closing the app would stop
 tracking — and the app is closed exactly when someone is reading. So it runs on its own, and
@@ -98,7 +98,31 @@ line.
 
 The macOS build is ad-hoc signed (`codesign -s -`, which Wails does automatically), so Apple
 Silicon does not refuse it outright as damaged — but it is not notarised, which needs a paid
-Apple account, so Gatekeeper still asks once. Windows SmartScreen asks for the same reason.
+Apple account, so Gatekeeper still asks once.
+
+Windows is the side that is worth spelling out, because the usual advice — *More info → Run
+anyway* — describes only one of three things it does, and someone who hits either of the other
+two is told to look for a link that is not on their screen:
+
+| What you see | What it is | The way out |
+|---|---|---|
+| **"Windows protected your PC"**, with **More info** | SmartScreen in its normal *warn* mode | **Run anyway** |
+| The same kind of box with **no More info at all**, only a button that closes it | **Smart App Control** (Windows 11), which by design [cannot be bypassed for an individual app](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions) — or SmartScreen set to *block* instead of *warn* | Windows Security → App & browser control → turn Smart App Control off (it can be turned back on), or set *Check apps and files* to **Warn** |
+| The file simply disappears after downloading | Defender quarantined it | Windows Security → Virus & threat protection → Protection history → **Allow on device** |
+
+All three have the same cause: the installer is not signed with a paid certificate, and this
+project does not buy one. Worth being precise about what buying one would and would not do —
+Microsoft's own [SmartScreen guidance for developers](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation)
+says reputation is earned through download volume even *with* a certificate, and that since
+March 2024 not even an EV certificate skips the prompt. A certificate is US$219–685 a year, is
+now required to live on a physical HSM token, and would still leave the first downloads warned
+about.
+
+What the installer does do is stop making itself look worse than it is. It installs per-user
+into `%LOCALAPPDATA%\Programs` and requests no elevation, so there is no *Unknown publisher* UAC
+prompt — and elevation, writing executables and registering a login task are together what a
+heuristic scanner reads as a dropper. That lowers the odds; it is not a signature, and does not
+promise the warning is gone.
 
 ## License
 

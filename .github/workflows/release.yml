@@ -276,11 +276,29 @@ jobs:
             reconoce al desarrollador: Ajustes del Sistema → Privacidad y
             seguridad → **Abrir de todos modos**. Una sola vez.
 
-            **Windows**: ejecutá el instalador. SmartScreen va a avisar lo mismo:
-            **Más información** → **Ejecutar de todas formas**.
+            **Windows**: ejecutá el instalador. Se instala para tu usuario, así
+            que **no pide permiso de administrador**. Si ya tenías una versión
+            anterior, te va a pedir quitarla primero: esa sí se había instalado
+            para toda la computadora.
 
-            No están firmados con un certificado de pago porque son de cobro
-            anual y esto es un proyecto personal.
+            Windows puede frenarlo igual, de tres maneras distintas — y solo una
+            de las tres tiene el "Ejecutar de todas formas" que suele mencionarse:
+
+            - **"Windows protegió tu PC"** con **Más información** → **Ejecutar
+              de todas formas**. Es el caso habitual.
+            - **Sin ese enlace, solo un botón para cerrar**: es Smart App
+              Control (Windows 11), que no tiene forma de saltarse por app.
+              Seguridad de Windows → Control de aplicaciones y navegador → Smart
+              App Control → Desactivado. Se puede volver a activar después.
+            - **Desaparece el archivo**: lo puso en cuarentena el antivirus.
+              Seguridad de Windows → Protección contra virus y amenazas →
+              Historial de protección → Permitir en el dispositivo.
+
+            En los tres casos el motivo es el mismo: no está firmado con un
+            certificado de pago. Son de cobro anual y esto es un proyecto
+            personal. Firmarlo tampoco lo arreglaría de inmediato — Microsoft
+            documenta que la reputación se gana por volumen de descargas, y
+            desde 2024 ni un certificado EV evita el aviso.
 
             Al abrirla, la app instala el servidor y lo deja arrancando solo en
             cada inicio de sesión. Después, desde el engranaje, la extensión del
