@@ -16,9 +16,16 @@ import (
 	"manga-tracker-desktop/internal/installer"
 	"manga-tracker-desktop/internal/payload"
 	"manga-tracker-desktop/internal/prefs"
+	"manga-tracker-desktop/internal/publicip"
+	"manga-tracker-desktop/internal/reach"
 	"manga-tracker-desktop/internal/servicecli"
 	"manga-tracker-desktop/internal/syncurl"
 )
+
+// reachTimeout bounds the probe that asks why sync is down: long enough for a
+// handshake over a slow link, short enough that a settings screen opened on a
+// broken connection still answers.
+const reachTimeout = 8 * time.Second
 
 // StoreURL is where the extension lives once Google approves it.
 //
@@ -36,6 +43,10 @@ type App struct {
 	// reported through the window instead of crashing on the first click.
 	setupErr string
 	client   *http.Client
+	// The network probe's two dependencies, as fields so a test can answer
+	// them without a resolver or a socket. Nil means the real ones.
+	lookupHost  reach.LookupHost
+	dialContext reach.DialContext
 }
 
 func NewApp() *App {
@@ -210,6 +221,38 @@ func (a *App) Settings() Settings {
 	return settings
 }
 
+// Diagnosis is why sync cannot reach its store, and the address an allowlist
+// would have to contain for it to.
+type Diagnosis struct {
+	// Reach is a code from internal/reach, which the window turns into a
+	// sentence — including "unknown", which is its own answer.
+	Reach string `json:"reach"`
+	// Address is this machine's public address, filled in only when the path is
+	// closed and it could be found out. Best effort: an empty one means the
+	// screen says nothing about it rather than showing a guess.
+	Address string `json:"address"`
+}
+
+// DiagnoseSync works out why a configured sync is not connecting.
+//
+// Its own call rather than part of Settings, because it dials a socket and may
+// ask a service on the internet: folded into Settings it would hold the
+// configuration dialog shut for as long as the probe took, and the probe is
+// slowest in exactly the case someone is opening the dialog to look at.
+//
+// The window calls it after it has rendered, and only for a sync that is
+// configured and reporting that it is down.
+func (a *App) DiagnoseSync() Diagnosis {
+	verdict := a.reachOfSync("")
+	diagnosis := Diagnosis{Reach: string(verdict)}
+	if verdict == reach.Unreachable {
+		if address, err := a.PublicAddress(); err == nil {
+			diagnosis.Address = address
+		}
+	}
+	return diagnosis
+}
+
 func (a *App) liveSync() SyncLive {
 	state := a.deps.Look(a.ctx)
 	if state.BaseURL == "" {
@@ -253,6 +296,11 @@ type SyncOutcome struct {
 	// from the keystore at startup. Surfaced rather than hidden: it is a real
 	// difference in where a password lives.
 	SecretInConfig bool `json:"secretInConfig"`
+	// Reach is why the network path to the store is or is not open, as a code
+	// from internal/reach. Set only when it was worth asking — a connection
+	// that came up needs no diagnosis — and "unknown" when the probe itself
+	// could not be carried out.
+	Reach string `json:"reach"`
 }
 
 // SetSync stores the user's own credentials and restarts the backend with them.
@@ -342,10 +390,25 @@ func (a *App) storeSync(url string, database string) (SyncOutcome, error) {
 // come up is worse than a credential in a file locked to the account, which is
 // what every install did until now — so on failure it falls back, says so, and
 // leaves the machine working.
+//
+// But only when a keystore that could not be read is a possible explanation at
+// all. "It did not connect" has more than one cause, and this used to treat
+// every one of them as that cause: a cluster whose allowlist no longer had this
+// machine's address took a working credential out of the Keychain and wrote it
+// in plaintext into the service's configuration, on a Mac whose Keychain was
+// fine. So the network path is tested first, and the fallback is reached only
+// when the path is open and the credential is therefore a candidate.
 func (a *App) awaitSyncOrFallBack() (SyncOutcome, error) {
 	outcome, err := a.awaitSync()
 	if err != nil || !outcome.Settled || outcome.Connected {
 		return outcome, err
+	}
+
+	outcome.Reach = string(a.reachOfSync(""))
+	if outcome.Reach != string(reach.Reachable) {
+		// Nothing about where the credential lives would change this, and
+		// moving a password to weaken it is not a step taken on a maybe.
+		return outcome, nil
 	}
 
 	reply, pinErr := a.service("pin-config-secret")
@@ -357,7 +420,34 @@ func (a *App) awaitSyncOrFallBack() (SyncOutcome, error) {
 
 	pinned, err := a.awaitSync()
 	pinned.SecretInConfig = reply.SecretInConfig
+	// Carried over rather than probed again: the path was open a moment ago,
+	// and it is what the screen needs to explain a fallback that still failed.
+	pinned.Reach = outcome.Reach
 	return pinned, err
+}
+
+// reachOfSync tests the network path to wherever sync points.
+//
+// An empty hostPort asks the service control where that is, which is the only
+// component that knows: the address lives beside the credential, and the
+// credential never travels here.
+func (a *App) reachOfSync(hostPort string) reach.Verdict {
+	if hostPort == "" {
+		reply, err := a.service("status")
+		if err != nil {
+			return reach.Unknown
+		}
+		hostPort = reply.SyncHost
+	}
+	lookup := a.lookupHost
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupHost
+	}
+	dial := a.dialContext
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
+	return reach.Check(a.ctx, hostPort, lookup, dial, reachTimeout)
 }
 
 // awaitSync reports whether the configuration that was just written connects.
@@ -434,6 +524,39 @@ func (a *App) ClearSync() error {
 	return err
 }
 
+// RetrySync asks the backend to connect to the store again, now.
+//
+// The header's "Reconectar" never did this: it looks for a backend on this
+// machine, which answers perfectly well while its connection to the store is
+// down. There was no way to retry the part that had actually failed short of
+// retyping the credential — so someone who fixed the real problem had to sit
+// and wait for the periodic attempt, with a screen still saying it was broken.
+//
+// `restart` rather than `repair`: the service definition is not in question
+// here, only the process reading it. And deliberately not the fallback path —
+// a retry must never be a reason to move a credential somewhere weaker.
+func (a *App) RetrySync() (SyncOutcome, error) {
+	if _, err := a.service("restart"); err != nil {
+		return SyncOutcome{}, err
+	}
+	outcome, err := a.awaitSync()
+	if outcome.Settled && !outcome.Connected {
+		outcome.Reach = string(a.reachOfSync(""))
+	}
+	return outcome, err
+}
+
+// PublicAddress is the address this machine appears to come from, which is what
+// an allowlist is written in terms of.
+//
+// Its own method rather than part of Settings: it is the one thing here that
+// asks a service nobody in this project runs, and the settings screen should
+// not pay for that on every open. The window calls it only when it has
+// something to say about an address.
+func (a *App) PublicAddress() (string, error) {
+	return publicip.Find(a.ctx, publicip.Client(reachTimeout), publicip.Endpoints)
+}
+
 // OpenInBrowser opens the store listing in one specific browser — not the
 // default one, which may not be the browser the extension is wanted in.
 func (a *App) OpenInBrowser(id string) error {
@@ -466,11 +589,13 @@ func (a *App) StartService() error {
 // Refuses an id no longer among the installed browsers rather than storing it:
 // a preference pointing at a browser that is not there would silently do
 // nothing every time it was used.
+// Update rather than Save: the file holds more than this one setting now, and
+// writing a Prefs built from the single value in hand would blank the rest.
 func (a *App) SetChapterBrowser(id string) error {
 	if id != "" && !browsers.Installed(id) {
 		return errors.New("unknown-browser")
 	}
-	return prefs.Save(a.deps.DataDir, prefs.Prefs{BrowserID: id})
+	return prefs.Update(a.deps.DataDir, func(p *prefs.Prefs) { p.BrowserID = id })
 }
 
 // OpenChapter opens a chapter link from the embedded dashboard in a real

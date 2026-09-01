@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ClearSync,
+  DiagnoseSync,
   OpenInBrowser,
+  RetrySync,
   RevealExtension,
   SetChapterBrowser,
   Settings as LoadSettings,
@@ -27,6 +29,25 @@ const SYNC_PROBLEMS: Record<string, string> = {
   noUser: "Pusiste una contraseña pero no un usuario.",
   srvUnresolved:
     "No pude averiguar en qué servidor está ese cluster: el DNS no respondió. Revisá la conexión a internet, o pegá la dirección directa (mongodb://servidor:puerto/…) si la tenés.",
+};
+
+/**
+ * Por qué no se llega a la base de datos, en las palabras de esta ventana.
+ *
+ * El backend informa lo que dijo el driver de MongoDB, y "Server selection timed
+ * out after 15000 ms" es la misma frase para una lista de direcciones permitidas
+ * que quedó vieja, un nombre que ya no existe y una contraseña equivocada. Go
+ * prueba la red y manda un código; la explicación —y qué hacer— se escribe acá.
+ */
+const REACH_REASONS: Record<string, string> = {
+  unreachable:
+    "No se llega al servidor: los paquetes salen y no vuelve nada. Casi siempre es que la lista de direcciones permitidas de la base de datos ya no incluye la IP de esta computadora, porque las IP domiciliarias cambian solas. Agregá la IP que aparece abajo desde el panel de tu proveedor — o autorizá 0.0.0.0/0 ahí mismo si preferís no repetirlo cada vez que cambie.",
+  unresolved:
+    "El nombre del servidor ya no existe en el DNS. Puede que el cluster haya cambiado de dirección, o que lo hayan borrado.",
+  reachable:
+    "Al servidor se llega bien, así que el problema no es la red: revisá el usuario, la contraseña o el nombre de la base de datos.",
+  unknown:
+    "No pude averiguar si desde esta computadora se llega al servidor. Puede ser que no haya conexión a internet en este momento.",
 };
 
 /**
@@ -118,6 +139,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [database, setDatabase] = useState("");
   const [saving, setSaving] = useState<Saving>({ kind: "idle" });
   const [manualOpen, setManualOpen] = useState(false);
+  // Qué acción está corriendo sobre una conexión ya configurada, para que cada
+  // botón muestre su propio "…" y no se puedan disparar dos a la vez.
+  const [busy, setBusy] = useState<"none" | "retrying">("none");
+  const [reach, setReach] = useState("");
+  const [address, setAddress] = useState("");
 
   const load = useCallback(() => {
     void LoadSettings().then((loaded) => {
@@ -127,6 +153,33 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(load, [load]);
+
+  // Sólo hay algo que diagnosticar cuando el backend contestó que la conexión
+  // está caída: una que anda no necesita explicación, y un backend al que no se
+  // le pudo preguntar todavía no dijo que hubiera nada mal.
+  const down =
+    settings !== null &&
+    settings.syncConfigured &&
+    settings.syncLive.asked &&
+    !settings.syncLive.connected;
+
+  // Después del render y no dentro de Settings(): el diagnóstico marca un
+  // socket y puede preguntar la IP afuera, así que metido en la carga dejaría
+  // el diálogo cerrado justo en el caso en que alguien lo abre para mirar.
+  useEffect(() => {
+    if (!down) {
+      setReach("");
+      setAddress("");
+      return;
+    }
+    void DiagnoseSync().then((diagnosis) => {
+      setReach(diagnosis.reach);
+      setAddress(diagnosis.address);
+    });
+    // Atado a settings y no sólo a `down`: cada acción que falla vuelve a
+    // cargarlos, y un diagnóstico de antes del intento describiría un estado
+    // que ya no es el que se está mirando.
+  }, [down, settings]);
 
   const save = useCallback(() => {
     setSaving({ kind: "saving" });
@@ -155,17 +208,47 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       );
   }, [entry, database, load]);
 
-  const reuse = useCallback(() => {
+  /**
+   * Volver a usar la credencial que ya está en el llavero de esta computadora.
+   *
+   * Recibe la base de datos en vez de leer la del formulario: se llama también
+   * desde una conexión ya configurada —para sacar la contraseña del archivo del
+   * servicio y devolverla al llavero— y ahí el formulario está vacío, así que
+   * habría cambiado la base a la de por omisión sin que nadie lo pidiera.
+   */
+  const reuse = useCallback(
+    (db: string) => {
+      setSaving({ kind: "saving" });
+      void UseStoredSync(db)
+        .then((outcome) => {
+          setSaving(outcomeOf(outcome));
+          load();
+        })
+        .catch((reason: unknown) =>
+          setSaving({ kind: "failed", detail: String(reason) }),
+        );
+    },
+    [load],
+  );
+
+  /**
+   * Reintentar la conexión a la base, que es distinto de "Reconectar" en la
+   * barra de arriba: aquel busca el backend en esta computadora, y el backend
+   * contesta perfectamente bien mientras su conexión a la base está caída.
+   */
+  const retry = useCallback(() => {
+    setBusy("retrying");
     setSaving({ kind: "saving" });
-    void UseStoredSync(database)
+    void RetrySync()
       .then((outcome) => {
         setSaving(outcomeOf(outcome));
         load();
       })
       .catch((reason: unknown) =>
         setSaving({ kind: "failed", detail: String(reason) }),
-      );
-  }, [database, load]);
+      )
+      .finally(() => setBusy("none"));
+  }, [load]);
 
   const turnOff = useCallback(() => {
     setSaving({ kind: "saving" });
@@ -263,6 +346,18 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                         </span>
                       )}
                   </p>
+
+                  {/* Por qué no conecta, probado en vez de deducido del texto
+                      del driver. Esa cadena queda arriba como detalle técnico;
+                      esta frase es la que dice qué hay que revisar. */}
+                  {settings.syncLive.asked &&
+                    !settings.syncLive.connected &&
+                    reach !== "" && (
+                      <p className="detail">
+                        {REACH_REASONS[reach] ?? reach}
+                      </p>
+                    )}
+
                   <dl className="status">
                     <dt>Servidor</dt>
                     <dd>
@@ -278,8 +373,28 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                         ? "en la configuración del servicio (archivo protegido)"
                         : "en el llavero del sistema"}
                     </dd>
+                    {reach === "unreachable" && address !== "" && (
+                      <>
+                        <dt>IP de esta computadora</dt>
+                        <dd>
+                          <code>{address}</code>
+                        </dd>
+                      </>
+                    )}
                   </dl>
                   <div className="row">
+                    {!settings.syncLive.connected && (
+                      <button
+                        type="button"
+                        className="action"
+                        onClick={retry}
+                        disabled={busy !== "none"}
+                      >
+                        {busy === "retrying"
+                          ? "Reintentando…"
+                          : "Reintentar ahora"}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="action"
@@ -295,6 +410,31 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                       Apagar
                     </button>
                   </div>
+
+                  {/* La salida del estado degradado. Antes no había ninguna: la
+                      contraseña entraba al archivo del servicio y se quedaba
+                      ahí, porque el botón para volver al llavero sólo aparecía
+                      con la sincronización apagada. */}
+                  {settings.secretInConfig && settings.hasStoredCredential && (
+                    <div className="fields">
+                      <p className="detail">
+                        La contraseña está en el archivo de configuración del
+                        servicio porque alguna vez la conexión no levantó. Si ya
+                        funciona, podés devolverla al llavero del sistema sin
+                        volver a escribirla.
+                      </p>
+                      <div className="row">
+                        <button
+                          type="button"
+                          className="action"
+                          onClick={() => reuse(settings.syncDb)}
+                          disabled={saving.kind === "saving"}
+                        >
+                          Devolver la contraseña al llavero
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -309,7 +449,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                     <button
                       type="button"
                       className="action primary"
-                      onClick={reuse}
+                      onClick={() => reuse(database)}
                       disabled={saving.kind === "saving"}
                     >
                       {saving.kind === "saving"
@@ -372,7 +512,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                           onChange={(event) =>
                             setEntry({ ...entry, address: event.target.value })
                           }
-                          placeholder="servidor:10260/?tls=true"
+                          placeholder="servidor:27017/?tls=true"
                           spellCheck={false}
                         />
                       </label>
@@ -415,7 +555,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                         onChange={(event) =>
                           setEntry({ kind: "paste", url: event.target.value })
                         }
-                        placeholder="mongodb://usuario:contraseña@servidor:10260/?tls=true"
+                        placeholder="mongodb://usuario:contraseña@servidor:27017/?tls=true"
                         spellCheck={false}
                         autoComplete="off"
                       />

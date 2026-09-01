@@ -49,10 +49,21 @@ working. It is a control panel, not a runtime.
   one**: someone whose default is Safari still wants the extension in Brave
 - `internal/syncurl/` — refuses a connection string that cannot work, and **assembles** one out
   of separately typed fields, returning a code the window turns into a sentence
-- `internal/prefs/` — what the window remembers between runs (today: which browser opens a
-  chapter), as a JSON file beside the database. Not in the payload tree, which an update
-  replaces wholesale. A missing file is the zero value and no error; a file that is there and
-  unreadable is an error, because those are different states
+- `internal/prefs/` — what the window remembers between runs (which browser opens a chapter),
+  as a JSON file beside the database. Not in the payload tree, which an update replaces
+  wholesale. A missing file is
+  the zero value and no error; a file that is there and unreadable is an error, because those
+  are different states. **Write through `Update`, never `Save`**: `Save` takes a whole `Prefs`,
+  so building one from the single value at hand blanks every other setting — invisible while
+  there was one field, and a lost browser choice the moment there were two
+- `internal/reach/` — why sync cannot reach its store, by testing the network rather than by
+  reading the driver's error text. Resolve the name, dial the port, and answer `unresolved`,
+  `unreachable`, `reachable` or `unknown`. Its two dependencies are parameters, so the tests
+  touch neither a resolver nor a socket
+- `internal/publicip/` — the address this machine appears to come from, which is the only way
+  to learn what an allowlist has to contain. **IPv4 pinned**: on a dual-stack machine an
+  unpinned request answers with the IPv6 address, and a firewall rule written from that allows
+  nothing
 - `build/` — icons and platform packaging metadata; `build/bin/` is the output (gitignored)
 - `sources.json` — the commits of the sibling repos a release bundles, and the Bun version.
   Pinned to commits, not `main`: a tag has to be rebuildable, and a broken commit landing in a
@@ -124,14 +135,22 @@ working. It is a control panel, not a runtime.
   exactly the people an update is for. Which is why extraction falls back to **renaming** the
   old tree aside (`runtime.old`, cleared on a later launch) when it cannot delete it: Windows
   allows the rename it denies the unlink.
-- **"I could not find out" is a state, never a false.** Three times now a boolean has had to
+- **"I could not find out" is a state, never a false.** Four times now a boolean has had to
   grow a companion for it: `Settings.asked` (no service, versus could not ask one),
-  `SyncOutcome.settled` (it did not connect, versus it was still restarting when I looked), and
-  `Look` (nothing answered, versus nothing is installed — see below). Every time, the missing
+  `SyncOutcome.settled` (it did not connect, versus it was still restarting when I looked),
+  `Look` (nothing answered, versus nothing is installed — see below), and `reach.Unknown` (the
+  path is closed, versus the probe could not be carried out). Every time, the missing
   distinction produced a screen that confidently said something untrue: the second told someone
   their working sync had failed, and the third offered to install over a configured machine.
   Anything answered by asking a service that is being restarted needs the third state before it
   needs anything else.
+- **"It did not connect" is not a cause.** It is the same sentence for an allowlist that no
+  longer has this machine's address, a name that stopped resolving, a wrong password and a
+  keystore the service cannot read — and the driver words all four as `Server selection timed
+  out after 15000 ms`. Matching on that string would be guessing and would break the day the
+  driver rewords it, so `internal/reach` tests the path instead and the screen explains what it
+  found. This is not decoration: every action taken on a failed sync has to know which of the
+  four it was, and taking the wrong one is what the rule below is about.
 - **`Look` probing the port is not enough to say a machine has nothing.** A backend restarting
   after an update answers nothing for a second, and that used to come back as
   `KindInstallable` — "Todavía no está instalado en esta computadora" — over a real
@@ -146,6 +165,24 @@ working. It is a control panel, not a runtime.
   derives its key from one — so the app watches whether sync comes up and calls
   `pin-config-secret` if it did not, putting the credential back in the file and saying so.
   Never assume the good path worked; watch for it.
+  **But only when an unreadable keystore is a possible explanation.** The fallback used to run
+  on any sync that failed to come up, and that is how a Mac with a perfectly good Keychain
+  ended up with its MongoDB password in plaintext in `com.mangatracker.plist`: the cluster's
+  allowlist no longer held the machine's address, and nothing about where a password lives
+  could have fixed a connection that never reached the server. `awaitSyncOrFallBack` now probes
+  the path first and falls back only on `reach.Reachable`. A retry never falls back at all —
+  someone asking to try again is not asking to move their password somewhere weaker. And the
+  state has a way out: `use-stored-sync` is reachable from the settings screen while sync is
+  configured, which it was not, so the degraded state was permanent once entered.
+- **The app knows a connection string and nothing about where Mongo lives.** A residential IP
+  rotates — twice in one afternoon, on the machine this was written for — and a managed
+  database's allowlist stops matching it, which is the single most likely reason a sync that
+  worked yesterday does not today. The screen reports the machine's public address (via
+  `internal/publicip`) and leaves the allowlist to a person in their provider's portal — the
+  same shape as sync itself, which takes a connection string and never asks whose it is. An
+  opt-in button that wrote the firewall rule itself through `az rest` (`internal/azurefw`) was
+  built and dropped before ever landing, with the move off Azure: on Atlas a one-time
+  `0.0.0.0/0` entry solves what it existed for.
 - **An update calls `repair`, not `restart`.** Restarting reloads what is already registered, so
   a machine installed before the launcher existed would go on starting the server directly. That
   is the whole migration, and it lives in `Prepare`.

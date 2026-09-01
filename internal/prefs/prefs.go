@@ -24,6 +24,10 @@ import (
 const fileName = "preferences.json"
 
 // Prefs is every setting the window keeps on this machine.
+//
+// Every field is optional and every zero value is a real state, so a file
+// written by an older version stays readable and a field nobody set reads as
+// "not chosen" rather than as a choice.
 type Prefs struct {
 	// BrowserID is which installed browser opens a chapter link, as an id from
 	// internal/browsers. Empty means the system default: someone who never
@@ -48,6 +52,24 @@ func Load(dir string) (Prefs, error) {
 		return Prefs{}, fmt.Errorf("parsing preferences: %w", err)
 	}
 	return p, nil
+}
+
+// Update changes one setting and leaves the rest of the file alone.
+//
+// The read-modify-write exists because Save takes a whole Prefs: building one
+// from the single value a caller happens to hold writes the zero value over
+// every other setting, and with one field in the struct that was invisible.
+// Callers should reach for this rather than Save.
+//
+// A file that is there and unreadable stops the write instead of replacing it,
+// so a setting nobody could read is never silently discarded.
+func Update(dir string, change func(*Prefs)) error {
+	stored, err := Load(dir)
+	if err != nil {
+		return err
+	}
+	change(&stored)
+	return Save(dir, stored)
 }
 
 // Save writes the preferences into dir, creating it if it is not there yet.

@@ -6,6 +6,10 @@ export function ClearSync() {
   return window['go']['main']['App']['ClearSync']();
 }
 
+export function DiagnoseSync() {
+  return window['go']['main']['App']['DiagnoseSync']();
+}
+
 export function Install() {
   return window['go']['main']['App']['Install']();
 }
@@ -20,6 +24,14 @@ export function OpenChapter(arg1) {
 
 export function OpenInBrowser(arg1) {
   return window['go']['main']['App']['OpenInBrowser'](arg1);
+}
+
+export function PublicAddress() {
+  return window['go']['main']['App']['PublicAddress']();
+}
+
+export function RetrySync() {
+  return window['go']['main']['App']['RetrySync']();
 }
 
 export function RevealExtension() {
