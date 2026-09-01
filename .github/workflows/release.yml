@@ -181,6 +181,22 @@ jobs:
       - name: Install the Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 
+      # windows-latest stopped shipping NSIS, and wails treats a missing
+      # makensis as a *warning*: the build "succeeds" with no installer, and
+      # three releases shipped the raw app renamed to Setup.exe before anyone
+      # ran one. Installed explicitly and verified, so from now on that failure
+      # mode is a red build instead of a wrong download.
+      - name: Install NSIS
+        if: matrix.os == 'windows-latest'
+        run: |
+          set -euo pipefail
+          if ! command -v makensis >/dev/null 2>&1; then
+            choco install nsis -y --no-progress
+            export PATH="$PATH:/c/Program Files (x86)/NSIS"
+          fi
+          echo 'C:\Program Files (x86)\NSIS' >> "$GITHUB_PATH"
+          makensis -VERSION
+
       - name: Build the app (macOS)
         if: matrix.os == 'macos-latest'
         run: |
@@ -244,8 +260,15 @@ jobs:
             exit 1
           }
 
-          installer=$(find build/bin -name "*.exe" -not -name "manga-tracker-desktop.exe" | head -1)
-          test -n "$installer"
+          # The app binary is "Manga Tracker.exe" (wails.json outputfilename),
+          # so the old exclusion of "manga-tracker-desktop.exe" matched nothing
+          # and `head -1` shipped the app itself. The NSIS artifact is the only
+          # file wails names with the -installer suffix — selected by that, and
+          # asserted to really be one: a renamed app must fail the build, not
+          # reach someone's Downloads.
+          installer=$(find build/bin -name "*-installer.exe" | head -1)
+          test -n "$installer" || { echo "::error::wails produced no NSIS installer"; exit 1; }
+          grep -aq "Nullsoft" "$installer" || { echo "::error::$installer is not an NSIS installer"; exit 1; }
           cp "$installer" "${{ matrix.artifact }}"
 
       - uses: actions/upload-artifact@v4
