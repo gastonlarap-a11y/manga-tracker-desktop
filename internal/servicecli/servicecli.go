@@ -61,7 +61,9 @@ type Command func(ctx context.Context, name string, args ...string) ([]byte, err
 
 // Exec is the real one.
 func Exec(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).Output()
+	command := exec.CommandContext(ctx, name, args...)
+	hideConsole(command)
+	return command.Output()
 }
 
 // CommandWithInput runs a program that is handed something on stdin.
@@ -76,6 +78,7 @@ type CommandWithInput func(ctx context.Context, stdin string, name string, args 
 // process on the machine can read.
 func ExecWithInput(ctx context.Context, stdin string, name string, args ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, args...)
+	hideConsole(command)
 	command.Stdin = strings.NewReader(stdin)
 	return command.Output()
 }
