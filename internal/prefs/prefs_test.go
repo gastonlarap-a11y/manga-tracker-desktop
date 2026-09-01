@@ -108,3 +108,39 @@ func TestSaveLeavesNoTemporaryFilesBehind(t *testing.T) {
 		t.Errorf("directory holds %v, want only %q", names, fileName)
 	}
 }
+
+func TestUpdateOnAMachineThatNeverChose(t *testing.T) {
+	dir := t.TempDir()
+	if err := Update(dir, func(p *Prefs) { p.BrowserID = "brave" }); err != nil {
+		t.Fatalf("Update on an empty directory: %v", err)
+	}
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.BrowserID != "brave" {
+		t.Errorf("BrowserID = %q, want it written", got.BrowserID)
+	}
+}
+
+// A file that cannot be read is not replaced: the settings in it are not lost
+// to a write that could not have known what it was overwriting.
+func TestUpdateRefusesToOverwriteAnUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, fileName), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("writing a corrupt file: %v", err)
+	}
+
+	if err := Update(dir, func(p *Prefs) { p.BrowserID = "edge" }); err == nil {
+		t.Fatal("Update on a corrupt file returned no error")
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, fileName))
+	if err != nil {
+		t.Fatalf("reading it back: %v", err)
+	}
+	if string(data) != "{not json" {
+		t.Errorf("the corrupt file was replaced with %q", string(data))
+	}
+}

@@ -5,6 +5,8 @@ import {installer} from '../models';
 
 export function ClearSync():Promise<void>;
 
+export function DiagnoseSync():Promise<main.Diagnosis>;
+
 export function Install():Promise<main.InstallOutcome>;
 
 export function Look():Promise<installer.State>;
@@ -12,6 +14,10 @@ export function Look():Promise<installer.State>;
 export function OpenChapter(arg1:string):Promise<void>;
 
 export function OpenInBrowser(arg1:string):Promise<void>;
+
+export function PublicAddress():Promise<string>;
+
+export function RetrySync():Promise<main.SyncOutcome>;
 
 export function RevealExtension():Promise<void>;
 

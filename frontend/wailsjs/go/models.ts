@@ -42,6 +42,20 @@ export namespace installer {
 
 export namespace main {
 	
+	export class Diagnosis {
+	    reach: string;
+	    address: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Diagnosis(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.reach = source["reach"];
+	        this.address = source["address"];
+	    }
+	}
 	export class InstallOutcome {
 	    baseUrl: string;
 	    port: number;
@@ -154,6 +168,7 @@ export namespace main {
 	    converted: boolean;
 	    host: string;
 	    secretInConfig: boolean;
+	    reach: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SyncOutcome(source);
@@ -169,6 +184,7 @@ export namespace main {
 	        this.converted = source["converted"];
 	        this.host = source["host"];
 	        this.secretInConfig = source["secretInConfig"];
+	        this.reach = source["reach"];
 	    }
 	}
 

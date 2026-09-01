@@ -134,8 +134,14 @@ function App() {
         <span className="where">
           {view.kind === "connected" ? view.baseUrl : "sin conexión"}
         </span>
+        {/* "Buscar de nuevo" y no "Reconectar": esto vuelve a sondear el
+            backend de esta computadora, que contesta perfectamente bien
+            mientras su conexión a la base de datos está caída. Quien tenía la
+            sincronización rota lo apretaba esperando que reintentara la
+            conexión, y no pasaba nada porque no es lo que hace. Reintentar la
+            base está en Configuración, al lado del estado que lo dice. */}
         <button type="button" className="action" onClick={look}>
-          Reconectar
+          Buscar de nuevo
         </button>
         <button
           type="button"
