@@ -186,6 +186,10 @@ working. It is a control panel, not a runtime.
 - **An update calls `repair`, not `restart`.** Restarting reloads what is already registered, so
   a machine installed before the launcher existed would go on starting the server directly. That
   is the whole migration, and it lives in `Prepare`.
+- **Every service-CLI spawn hides its console on Windows.** The app is a GUI process, so
+  each bundled-Bun invocation would otherwise open a console window for the second it runs —
+  saving a connection flashed three of them across the screen. `servicecli` sets
+  `CREATE_NO_WINDOW` on every spawn; a new spawn path must do the same.
 - **A credential never goes into a command line.** `CallWithSecret` puts it on the service
   control's stdin; `Call` is for everything else. An argument is readable by every process on
   the machine (`ps`, Task Manager) for as long as the command runs, which is the rule
