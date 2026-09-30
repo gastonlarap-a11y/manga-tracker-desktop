@@ -3,6 +3,7 @@ package browsers
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,7 +18,7 @@ func installed(paths ...string) func(string) bool {
 }
 
 func TestDetectListsOnlyWhatIsThere(t *testing.T) {
-	found := detectIn(macCandidates(), installed("/Applications/Brave Browser.app"))
+	found := detectIn(macCandidates("/Users/someone"), installed("/Applications/Brave Browser.app"))
 
 	if len(found) != 1 || found[0].ID != "brave" {
 		t.Fatalf("expected only Brave, got %+v", found)
@@ -27,10 +28,35 @@ func TestDetectListsOnlyWhatIsThere(t *testing.T) {
 	}
 }
 
+// A browser installed without an administrator password goes to the user's own
+// ~/Applications, and it is just as much the one they read in.
+func TestDetectFindsABrowserInstalledForOneUser(t *testing.T) {
+	found := detectIn(macCandidates("/Users/someone"), installed("/Users/someone/Applications/Google Chrome.app"))
+
+	if len(found) != 1 || found[0].Path != "/Users/someone/Applications/Google Chrome.app" {
+		t.Fatalf("expected Chrome from ~/Applications, got %+v", found)
+	}
+}
+
+// With no home directory the per-user location is skipped rather than joined
+// onto nothing, which would be a path relative to the working directory.
+func TestDetectWithoutAHomeLooksOnlyInApplications(t *testing.T) {
+	for _, candidate := range macCandidates("") {
+		for _, p := range candidate.paths {
+			if !strings.HasPrefix(p, "/") {
+				t.Errorf("%s: relative path %q", candidate.id, p)
+			}
+		}
+		if len(candidate.paths) != 1 {
+			t.Errorf("%s: paths = %v, want only /Applications", candidate.id, candidate.paths)
+		}
+	}
+}
+
 func TestDetectFindsNothingOnABareMachine(t *testing.T) {
 	// Not an error: someone may only have Safari or Firefox, and the window
 	// then offers the manual path instead of a button that opens nothing.
-	if found := detectIn(macCandidates(), installed()); len(found) != 0 {
+	if found := detectIn(macCandidates("/Users/someone"), installed()); len(found) != 0 {
 		t.Errorf("expected nothing, got %+v", found)
 	}
 }

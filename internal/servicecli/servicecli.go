@@ -13,9 +13,11 @@ package servicecli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Reply is the union of every field the CLI prints. A command that does not
@@ -89,6 +91,21 @@ type Client struct {
 	ScriptPath   string
 	Run          Command
 	RunWithInput CommandWithInput
+	// Timeout bounds each command; zero means DefaultTimeout.
+	Timeout time.Duration
+}
+
+// DefaultTimeout bounds one command. The slowest ones reload the service, which
+// waits for launchd or the Task Scheduler to let go of the old process —
+// seconds, not minutes. Unbounded, a CLI stuck behind something that never
+// returned left the window on "Instalando…" for as long as the app stayed open.
+const DefaultTimeout = 90 * time.Second
+
+func (c Client) timeout() time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
+	}
+	return DefaultTimeout
 }
 
 // Call runs one command and returns its reply.
@@ -97,8 +114,10 @@ func (c Client) Call(ctx context.Context, args ...string) (Reply, error) {
 	if run == nil {
 		run = Exec
 	}
+	ctx, cancel := context.WithTimeout(ctx, c.timeout())
+	defer cancel()
 	stdout, err := run(ctx, c.BunPath, c.argsFor(args)...)
-	return parseReply(stdout, err)
+	return parseReply(stdout, c.timedOut(ctx, err))
 }
 
 // CallWithSecret is Call for the one command that carries a credential.
@@ -113,8 +132,19 @@ func (c Client) CallWithSecret(ctx context.Context, secret string, args ...strin
 	if run == nil {
 		run = ExecWithInput
 	}
+	ctx, cancel := context.WithTimeout(ctx, c.timeout())
+	defer cancel()
 	stdout, err := run(ctx, secret, c.BunPath, c.argsFor(args)...)
-	return parseReply(stdout, err)
+	return parseReply(stdout, c.timedOut(ctx, err))
+}
+
+// timedOut names a command killed by the timeout as that: what exec reports
+// is "signal: killed", which reads like a crash.
+func (c Client) timedOut(ctx context.Context, err error) error {
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("no answer within %s: %w", c.timeout(), err)
+	}
+	return err
 }
 
 func (c Client) argsFor(args []string) []string {
@@ -133,6 +163,12 @@ func parseReply(stdout []byte, err error) (Reply, error) {
 	var reply Reply
 	if parseErr := json.Unmarshal(trimToJSON(stdout), &reply); parseErr != nil {
 		if err != nil {
+			// Bun's own complaint — a missing file, a syntax error in the
+			// bundle — goes to stderr, and without it the only thing on screen
+			// was "exit status 1".
+			if detail := stderrOf(err); detail != "" {
+				return Reply{}, fmt.Errorf("service control did not run: %w: %s", err, detail)
+			}
 			return Reply{}, fmt.Errorf("service control did not run: %w", err)
 		}
 		return Reply{}, fmt.Errorf("service control returned no usable answer: %q", string(stdout))
@@ -144,6 +180,24 @@ func parseReply(stdout []byte, err error) (Reply, error) {
 		return reply, fmt.Errorf("%s", reply.Error)
 	}
 	return reply, nil
+}
+
+// stderrMax bounds how much of a failing program's stderr reaches the screen:
+// enough for the line that says what went wrong, not a whole stack trace.
+const stderrMax = 400
+
+// stderrOf is the tail of what a program that exited with an error wrote to
+// stderr, which exec keeps on the ExitError when Output collected stdout.
+func stderrOf(err error) string {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return ""
+	}
+	detail := strings.TrimSpace(string(exitErr.Stderr))
+	if len(detail) > stderrMax {
+		detail = "…" + detail[len(detail)-stderrMax:]
+	}
+	return detail
 }
 
 // Bun may print a warning before the JSON; the object is the last line that

@@ -193,7 +193,10 @@ working. It is a control panel, not a runtime.
 - **Every service-CLI spawn hides its console on Windows.** The app is a GUI process, so
   each bundled-Bun invocation would otherwise open a console window for the second it runs —
   saving a connection flashed three of them across the screen. `servicecli` sets
-  `CREATE_NO_WINDOW` on every spawn; a new spawn path must do the same.
+  `CREATE_NO_WINDOW` on every spawn; a new spawn path must do the same. Every call is also
+  bounded (`servicecli.DefaultTimeout`) and a failure carries the tail of the CLI's stderr —
+  unbounded, a stuck CLI held "Instalando…" forever, and without stderr the screen said
+  only "exit status 1".
 - **Every bound method that reaches into `deps` starts with `a.begin()`.** Wails 2.12 runs
   `OnStartup` on a goroutine of its own while the window loads, so the first `Look` used to
   run in the middle of `Prepare` and report a half-extracted tree as "unknown", or a service

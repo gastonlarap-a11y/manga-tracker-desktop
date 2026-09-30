@@ -265,8 +265,10 @@ func TestRetrySyncNeverPinsTheCredential(t *testing.T) {
 	if calls.ran("pin-config-secret") {
 		t.Error("a retry moved the credential into the service configuration")
 	}
-	if outcome.Reach != string(reach.Reachable) {
-		t.Errorf("Reach = %q, want the diagnosis carried back", outcome.Reach)
+	// The diagnosis comes from DiagnoseSync once the window reloads; probing
+	// here too only held "Reintentando…" open for an answer nobody read.
+	if outcome.Reach != "" {
+		t.Errorf("Reach = %q, want it left to DiagnoseSync", outcome.Reach)
 	}
 }
 

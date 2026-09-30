@@ -11,7 +11,8 @@ import {
   SetSyncFields,
   UseStoredSync,
 } from "../wailsjs/go/main/App";
-import type { main } from "../wailsjs/go/models";
+import type { browsers, main } from "../wailsjs/go/models";
+import { Environment } from "../wailsjs/runtime/runtime";
 import "./Settings.css";
 
 /**
@@ -67,6 +68,38 @@ const EMPTY_FIELDS: Entry = {
   password: "",
 };
 
+/**
+ * What was asked for. The same three outcomes — connected, still restarting,
+ * did not connect — read differently depending on it: "se guardó" is true of a
+ * save and false of a retry, which saves nothing.
+ */
+type ConnectAction = "save" | "reuse" | "retry";
+type Action = ConnectAction | "turnOff";
+
+const NOT_CONNECTED: Record<ConnectAction, string> = {
+  save: "Se guardó, pero no pudo conectar.",
+  reuse: "Se activó, pero no pudo conectar.",
+  retry: "Reintenté y sigue sin conectar.",
+};
+
+const STILL_RESTARTING: Record<ConnectAction, string> = {
+  save: "Se guardó. El servidor está reiniciando con los datos nuevos y todavía no contestó",
+  reuse: "Se activó. El servidor está reiniciando y todavía no contestó",
+  retry: "El servidor está reiniciando y todavía no contestó",
+};
+
+/**
+ * The action itself failed — nothing was saved, switched or restarted. Kept
+ * apart from NOT_CONNECTED, which every rejection used to land on: "se guardó,
+ * pero no pudo conectar" over a save that never happened.
+ */
+const ACTION_FAILED: Record<Action, string> = {
+  save: "No se pudo guardar la conexión.",
+  reuse: "No se pudo activar la conexión que ya tenías.",
+  retry: "No se pudo reiniciar el servidor para reintentar.",
+  turnOff: "No se pudo apagar la sincronización.",
+};
+
 type Saving =
   | { kind: "idle" }
   | { kind: "saving" }
@@ -82,11 +115,14 @@ type Saving =
       // the credential had to go into the service's configuration instead.
       secretInConfig?: boolean;
     }
-  // Saved, but the backend was still restarting when we looked. Kept apart from
+  // Done, but the backend was still restarting when we looked. Kept apart from
   // "failed": telling someone their sync did not connect when it did is worse
   // than telling them to look again in a moment.
-  | { kind: "unsettled" }
-  | { kind: "failed"; detail: string };
+  | { kind: "unsettled"; action: ConnectAction }
+  // Done, and it answered: not connected.
+  | { kind: "failed"; action: ConnectAction; detail: string }
+  // The action itself did not happen.
+  | { kind: "error"; action: Action; detail: string };
 
 /**
  * "hace 3 minutos", from an RFC 3339 timestamp. Written here rather than in Go
@@ -113,9 +149,9 @@ function sinceLabel(iso: string): string {
   return `hace ${days} ${days === 1 ? "día" : "días"}`;
 }
 
-function outcomeOf(outcome: main.SyncOutcome): Saving {
+function outcomeOf(action: ConnectAction, outcome: main.SyncOutcome): Saving {
   if (!outcome.settled) {
-    return { kind: "unsettled" };
+    return { kind: "unsettled", action };
   }
   return outcome.connected
     ? {
@@ -124,7 +160,19 @@ function outcomeOf(outcome: main.SyncOutcome): Saving {
         convertedTo: outcome.converted ? outcome.host : "",
         secretInConfig: outcome.secretInConfig,
       }
-    : { kind: "failed", detail: outcome.lastError };
+    : { kind: "failed", action, detail: outcome.lastError };
+}
+
+/** The platform's name for its file manager, for the "show the folder" link. */
+function fileManagerLabel(platform: string): string {
+  switch (platform) {
+    case "darwin":
+      return "mostrar en el Finder";
+    case "windows":
+      return "mostrar en el Explorador de archivos";
+    default:
+      return "mostrar la carpeta";
+  }
 }
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
@@ -144,15 +192,32 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState<"none" | "retrying">("none");
   const [reach, setReach] = useState("");
   const [address, setAddress] = useState("");
+  // Why the settings could not be read, when they could not. Without it a
+  // rejected load left "Leyendo la configuración…" on screen for good.
+  const [loadError, setLoadError] = useState("");
+  // Failures of the one-shot buttons, each shown beside its own section.
+  const [extensionNotice, setExtensionNotice] = useState("");
+  const [browserNotice, setBrowserNotice] = useState("");
+  const [platform, setPlatform] = useState("");
 
   const load = useCallback(() => {
-    void LoadSettings().then((loaded) => {
-      setSettings(loaded);
-      setWantsSync(loaded.syncConfigured);
-    });
+    setLoadError("");
+    void LoadSettings()
+      .then((loaded) => {
+        setSettings(loaded);
+        setWantsSync(loaded.syncConfigured);
+      })
+      .catch((reason: unknown) => setLoadError(String(reason)));
   }, []);
 
   useEffect(load, [load]);
+
+  useEffect(() => {
+    // Only a label depends on it, and the neutral one is still true.
+    void Environment()
+      .then((environment) => setPlatform(environment.platform))
+      .catch(() => setPlatform(""));
+  }, []);
 
   // Sólo hay algo que diagnosticar cuando el backend contestó que la conexión
   // está caída: una que anda no necesita explicación, y un backend al que no se
@@ -172,10 +237,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       setAddress("");
       return;
     }
-    void DiagnoseSync().then((diagnosis) => {
-      setReach(diagnosis.reach);
-      setAddress(diagnosis.address);
-    });
+    void DiagnoseSync()
+      .then((diagnosis) => {
+        setReach(diagnosis.reach);
+        setAddress(diagnosis.address);
+      })
+      // Not asking is not finding out: "unknown" is the honest answer, and
+      // it is one the window already knows how to say.
+      .catch(() => {
+        setReach("unknown");
+        setAddress("");
+      });
     // Atado a settings y no sólo a `down`: cada acción que falla vuelve a
     // cargarlos, y un diagnóstico de antes del intento describiría un estado
     // que ya no es el que se está mirando.
@@ -196,7 +268,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           });
           return;
         }
-        setSaving(outcomeOf(outcome));
+        setSaving(outcomeOf("save", outcome));
         // Back to the summary: the form did its job, and leaving it open with
         // the credential still in it invites a second save nobody meant.
         setEditing(false);
@@ -204,7 +276,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         load();
       })
       .catch((reason: unknown) =>
-        setSaving({ kind: "failed", detail: String(reason) }),
+        setSaving({ kind: "error", action: "save", detail: String(reason) }),
       );
   }, [entry, database, load]);
 
@@ -221,11 +293,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       setSaving({ kind: "saving" });
       void UseStoredSync(db)
         .then((outcome) => {
-          setSaving(outcomeOf(outcome));
+          setSaving(outcomeOf("reuse", outcome));
           load();
         })
         .catch((reason: unknown) =>
-          setSaving({ kind: "failed", detail: String(reason) }),
+          setSaving({ kind: "error", action: "reuse", detail: String(reason) }),
         );
     },
     [load],
@@ -241,11 +313,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setSaving({ kind: "saving" });
     void RetrySync()
       .then((outcome) => {
-        setSaving(outcomeOf(outcome));
+        setSaving(outcomeOf("retry", outcome));
         load();
       })
       .catch((reason: unknown) =>
-        setSaving({ kind: "failed", detail: String(reason) }),
+        setSaving({ kind: "error", action: "retry", detail: String(reason) }),
       )
       .finally(() => setBusy("none"));
   }, [load]);
@@ -262,9 +334,39 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         load();
       })
       .catch((reason: unknown) =>
-        setSaving({ kind: "failed", detail: String(reason) }),
+        setSaving({ kind: "error", action: "turnOff", detail: String(reason) }),
       );
   }, [load]);
+
+  const openStore = useCallback((browser: browsers.Browser) => {
+    setExtensionNotice("");
+    void OpenInBrowser(browser.id).catch((reason: unknown) =>
+      setExtensionNotice(`No pude abrir ${browser.name}. ${String(reason)}`),
+    );
+  }, []);
+
+  const revealExtension = useCallback(() => {
+    setExtensionNotice("");
+    void RevealExtension().catch((reason: unknown) =>
+      setExtensionNotice(`No pude abrir la carpeta. ${String(reason)}`),
+    );
+  }, []);
+
+  const chooseBrowser = useCallback(
+    (chosen: string) => {
+      setBrowserNotice("");
+      void SetChapterBrowser(chosen)
+        .then(load)
+        .catch((reason: unknown) =>
+          setBrowserNotice(
+            String(reason).includes("unknown-browser")
+              ? "Ese navegador ya no está instalado, así que no lo guardé."
+              : `No pude guardar tu elección. ${String(reason)}`,
+          ),
+        );
+    },
+    [load],
+  );
 
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: the backdrop is a courtesy;
@@ -290,7 +392,21 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         </header>
 
         {settings === null ? (
-          <p className="detail">Leyendo la configuración…</p>
+          loadError === "" ? (
+            <p className="detail">Leyendo la configuración…</p>
+          ) : (
+            <div className="fields">
+              <p className="detail bad">
+                No pude leer la configuración.
+                <span className="reason"> {loadError}</span>
+              </p>
+              <div className="row">
+                <button type="button" className="action" onClick={load}>
+                  Reintentar
+                </button>
+              </div>
+            </div>
+          )
         ) : (
           <>
             <section>
@@ -438,7 +554,13 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 </div>
               )}
 
-              {settings.hasStoredCredential && !settings.syncConfigured && (
+              {/* Only on an installed machine. The credential survives an
+                  uninstall, so the offer appeared before installing too — and
+                  taking it wrote a configuration the service control then read
+                  as an installation, which the install button refused. */}
+              {settings.installed &&
+                settings.hasStoredCredential &&
+                !settings.syncConfigured && (
                 <div className="fields">
                   <p className="detail">
                     Esta computadora ya tiene guardada una conexión de una
@@ -644,14 +766,21 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               )}
               {saving.kind === "unsettled" && (
                 <p className="detail">
-                  Se guardó. El servidor está reiniciando con los datos nuevos y
-                  todavía no contestó — mirá <strong>Estado</strong> acá abajo en
-                  unos segundos.
+                  {STILL_RESTARTING[saving.action]} — mirá <strong>Estado</strong>{" "}
+                  acá abajo en unos segundos.
                 </p>
               )}
               {saving.kind === "failed" && (
                 <p className="detail bad">
-                  Se guardó, pero no pudo conectar.
+                  {NOT_CONNECTED[saving.action]}
+                  {saving.detail !== "" && (
+                    <span className="reason"> {saving.detail}</span>
+                  )}
+                </p>
+              )}
+              {saving.kind === "error" && (
+                <p className="detail bad">
+                  {ACTION_FAILED[saving.action]}
                   {saving.detail !== "" && (
                     <span className="reason"> {saving.detail}</span>
                   )}
@@ -676,12 +805,15 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                       type="button"
                       key={browser.id}
                       className="action"
-                      onClick={() => void OpenInBrowser(browser.id)}
+                      onClick={() => openStore(browser)}
                     >
                       Instalar en {browser.name}
                     </button>
                   ))}
                 </div>
+              )}
+              {extensionNotice !== "" && (
+                <p className="detail bad">{extensionNotice}</p>
               )}
 
               <button
@@ -699,9 +831,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                     <button
                       type="button"
                       className="link"
-                      onClick={() => void RevealExtension()}
+                      onClick={revealExtension}
                     >
-                      mostrar en el Finder
+                      {fileManagerLabel(platform)}
                     </button>
                     <code>{settings.extensionDir}</code>
                   </li>
@@ -732,10 +864,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               <select
                 className="action"
                 value={settings.chapterBrowser}
-                onChange={(event) => {
-                  const chosen = event.target.value;
-                  void SetChapterBrowser(chosen).then(load);
-                }}
+                onChange={(event) => chooseBrowser(event.target.value)}
               >
                 <option value="">El navegador por defecto del sistema</option>
                 {settings.browsers.map((browser) => (
@@ -755,6 +884,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                   </option>
                 ) : null}
               </select>
+              {browserNotice !== "" && (
+                <p className="detail bad">{browserNotice}</p>
+              )}
             </section>
 
             <section>

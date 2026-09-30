@@ -646,6 +646,11 @@ func (a *App) ClearSync() error {
 // `restart` rather than `repair`: the service definition is not in question
 // here, only the process reading it. And deliberately not the fallback path —
 // a retry must never be a reason to move a credential somewhere weaker.
+//
+// No network probe here: the window reloads its settings after a retry, and a
+// sync still down gets DiagnoseSync, address included. Probing here as well
+// cost up to reachTimeout more on "Reintentando…" for an answer the window
+// then threw away.
 func (a *App) RetrySync() (SyncOutcome, error) {
 	if err := a.begin(); err != nil {
 		return SyncOutcome{}, err
@@ -653,11 +658,7 @@ func (a *App) RetrySync() (SyncOutcome, error) {
 	if _, err := a.service("restart"); err != nil {
 		return SyncOutcome{}, err
 	}
-	outcome, err := a.awaitSync()
-	if outcome.Settled && !outcome.Connected {
-		outcome.Reach = string(a.reachOfSync(""))
-	}
-	return outcome, err
+	return a.awaitSync()
 }
 
 // PublicAddress is the address this machine appears to come from, which is what
