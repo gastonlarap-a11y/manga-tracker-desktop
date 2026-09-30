@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -45,34 +47,146 @@ const (
 	Reachable Verdict = "reachable"
 )
 
-// LookupHost and DialContext are the only two things this package needs from
-// the network, taken as parameters so the tests never touch one.
+// DefaultPort is MongoDB's, which a connection string that names no port means.
+const DefaultPort = "27017"
+
+// LookupHost, LookupSRV and DialContext are the only things this package needs
+// from the network, taken as parameters so the tests never touch one.
 //
-// Both match the methods on net.Resolver and net.Dialer, so production passes
-// net.DefaultResolver.LookupHost and (&net.Dialer{}).DialContext unchanged.
+// They match the methods on net.Resolver and net.Dialer, so production passes
+// net.DefaultResolver.LookupHost, net.DefaultResolver.LookupSRV and
+// (&net.Dialer{}).DialContext unchanged.
 type (
 	LookupHost  func(ctx context.Context, host string) ([]string, error)
+	LookupSRV   func(ctx context.Context, service, proto, name string) (string, []*net.SRV, error)
 	DialContext func(ctx context.Context, network, address string) (net.Conn, error)
 )
 
-// Check reports whether the network path to hostPort is open.
+// Network bundles those dependencies.
+type Network struct {
+	LookupHost LookupHost
+	LookupSRV  LookupSRV
+	Dial       DialContext
+}
+
+// Check reports whether the network path to wherever sync points is open.
 //
-// hostPort is what the service control already reports as its sync host, in
-// "name:port" form. Anything it cannot parse is Unknown rather than a guess.
-func Check(ctx context.Context, hostPort string, lookup LookupHost, dial DialContext, timeout time.Duration) Verdict {
+// hosts is what the service control reports as its sync host: everything
+// between a connection string's `@` and its path. For a single server that is
+// "name:port", but a cluster — which is what every resolved mongodb+srv://
+// address becomes — is a comma-separated seed list of them, and a host may
+// carry no port at all. Reading only the single-server form made every Atlas
+// cluster come back Unknown, so the screen blamed the internet connection and
+// the keystore fallback never ran.
+//
+// The seed hosts are probed together, within one timeout, and the answer is
+// the most useful one that is also true: one open path makes the whole store
+// reachable, because the driver only needs one.
+func Check(ctx context.Context, hosts string, network Network, timeout time.Duration) Verdict {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	targets := seedList(ctx, hosts, network.LookupSRV)
+	if len(targets) == 0 {
+		return Unknown
+	}
+
+	verdicts := make(chan Verdict, len(targets))
+	for _, target := range targets {
+		go func() { verdicts <- checkOne(ctx, target, network) }()
+	}
+	collected := make([]Verdict, 0, len(targets))
+	for range targets {
+		verdict := <-verdicts
+		if verdict == Reachable {
+			// The rest can only add a closed path to an open one. Returning
+			// cancels them through the deferred cancel.
+			return Reachable
+		}
+		collected = append(collected, verdict)
+	}
+	return combine(collected)
+}
+
+// combine is the verdict for a store none of whose hosts was reachable.
+//
+// Unknown wins over everything that is left: a probe that could not be carried
+// out says nothing about its host, so a finding drawn from the others would be
+// drawn from part of the store. Otherwise any name that resolved and refused
+// is the allowlist case, and only a store whose every name is gone is
+// Unresolved.
+func combine(verdicts []Verdict) Verdict {
+	result := Unresolved
+	for _, verdict := range verdicts {
+		switch verdict {
+		case Unknown:
+			return Unknown
+		case Unreachable:
+			result = Unreachable
+		}
+	}
+	return result
+}
+
+// seedList turns the reported hosts into "name:port" targets.
+//
+// A host without a port means one of two things. From a mongodb+srv://
+// address, which this machine may still hold from before the app converted
+// them, it is the name of an SRV record, which lists the real servers and
+// usually has no address of its own — probing it directly would call a
+// perfectly good cluster Unresolved. Anything else is MongoDB's default port.
+func seedList(ctx context.Context, hosts string, lookupSRV LookupSRV) []string {
+	var targets []string
+	for _, host := range strings.Split(hosts, ",") {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
+		if _, _, err := net.SplitHostPort(host); err == nil {
+			targets = append(targets, host)
+			continue
+		}
+		name := strings.Trim(host, "[]")
+		if records := srvTargets(ctx, name, lookupSRV); len(records) > 0 {
+			targets = append(targets, records...)
+			continue
+		}
+		targets = append(targets, net.JoinHostPort(name, DefaultPort))
+	}
+	return targets
+}
+
+// srvTargets is what an SRV record for a MongoDB cluster lists, or nothing when
+// the name has no such record or it could not be read.
+func srvTargets(ctx context.Context, name string, lookupSRV LookupSRV) []string {
+	if lookupSRV == nil || net.ParseIP(name) != nil {
+		return nil
+	}
+	_, records, err := lookupSRV(ctx, "mongodb", "tcp", name)
+	if err != nil {
+		return nil
+	}
+	targets := make([]string, 0, len(records))
+	for _, record := range records {
+		// DNS names come back fully qualified, with the root dot.
+		target := strings.TrimSuffix(record.Target, ".")
+		targets = append(targets, net.JoinHostPort(target, strconv.Itoa(int(record.Port))))
+	}
+	return targets
+}
+
+// checkOne is the verdict for a single "name:port".
+func checkOne(ctx context.Context, hostPort string, network Network) Verdict {
 	host, _, err := net.SplitHostPort(hostPort)
 	if err != nil || host == "" {
 		return Unknown
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	if verdict := resolves(ctx, host, lookup); verdict != Reachable {
+	if verdict := resolves(ctx, host, network.LookupHost); verdict != Reachable {
 		return verdict
 	}
 
-	conn, err := dial(ctx, "tcp", hostPort)
+	conn, err := network.Dial(ctx, "tcp", hostPort)
 	if err != nil {
 		return dialVerdict(err)
 	}

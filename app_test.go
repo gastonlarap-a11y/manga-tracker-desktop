@@ -71,10 +71,18 @@ func appFor(t *testing.T, baseURL string, calls *serviceCalls, dial reach.DialCo
 			Available: func() bool { return true },
 			Call:      calls.call,
 		},
-		lookupHost:  func(context.Context, string) ([]string, error) { return []string{"203.0.113.7"}, nil },
+		lookupHost: func(context.Context, string) ([]string, error) { return []string{"203.0.113.7"}, nil },
+		// No name here has an SRV record, so a test never reaches real DNS.
+		lookupSRV: func(context.Context, string, string, string) (string, []*net.SRV, error) {
+			return "", nil, &net.DNSError{Err: "no such host", IsNotFound: true}
+		},
 		dialContext: dial,
 	}
 }
+
+// atlasSeed is what the service control reports as the sync host of a
+// resolved mongodb+srv:// address — the shape every Atlas cluster has.
+const atlasSeed = "ac-a-shard-00-00.x.mongodb.net:27017,ac-a-shard-00-01.x.mongodb.net:27017,ac-a-shard-00-02.x.mongodb.net:27017"
 
 func dialTimesOut(context.Context, string, string) (net.Conn, error) {
 	return nil, &net.OpError{Op: "dial", Net: "tcp", Err: context.DeadlineExceeded}
@@ -152,6 +160,48 @@ func TestAwaitSyncOrFallBackStillPinsWhenTheNetworkIsFine(t *testing.T) {
 	}
 	if !outcome.SecretInConfig {
 		t.Error("SecretInConfig = false, want the fallback reported")
+	}
+}
+
+// On an Atlas cluster the fallback never ran at all: its seed list read as an
+// unparsable host, so the probe answered Unknown and a Windows service that
+// could not read its keystore never got the credential it needed.
+func TestAwaitSyncOrFallBackPinsForAReachableAtlasCluster(t *testing.T) {
+	t.Parallel()
+
+	calls := &serviceCalls{reply: servicecli.Reply{
+		OK: true, Installed: true, SyncConfigured: true,
+		SyncHost:       atlasSeed,
+		SecretInConfig: true,
+	}}
+	app := appFor(t, backendReporting(t, false, "Authentication failed"), calls, dialSucceeds(t))
+
+	outcome, err := app.awaitSyncOrFallBack()
+	if err != nil {
+		t.Fatalf("awaitSyncOrFallBack() error = %v", err)
+	}
+	if outcome.Reach != string(reach.Reachable) {
+		t.Errorf("Reach = %q, want %q", outcome.Reach, reach.Reachable)
+	}
+	if !calls.ran("pin-config-secret") {
+		t.Error("the fallback was not attempted for a cluster whose path is open")
+	}
+}
+
+// And the allowlist case, which is the one the screen explains with this
+// machine's address — the reason the diagnosis exists. Asked through
+// reachOfSync rather than DiagnoseSync, which would go on to ask a real
+// service on the internet for that address.
+func TestReachOfSyncCallsAClosedAtlasClusterUnreachable(t *testing.T) {
+	t.Parallel()
+
+	calls := &serviceCalls{reply: servicecli.Reply{
+		OK: true, Installed: true, SyncConfigured: true, SyncHost: atlasSeed,
+	}}
+	app := appFor(t, "", calls, dialTimesOut)
+
+	if verdict := app.reachOfSync(""); verdict != reach.Unreachable {
+		t.Errorf("reachOfSync() = %q, want %q", verdict, reach.Unreachable)
 	}
 }
 

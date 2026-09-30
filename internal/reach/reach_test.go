@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -32,6 +33,35 @@ func lookupFails(err error) LookupHost {
 	return func(context.Context, string) ([]string, error) { return nil, err }
 }
 
+// noSRV is a resolver that has no SRV record for anything.
+func noSRV(context.Context, string, string, string) (string, []*net.SRV, error) {
+	return "", nil, &net.DNSError{Err: "no such host", IsNotFound: true}
+}
+
+func network(lookup LookupHost, dial DialContext) Network {
+	return Network{LookupHost: lookup, LookupSRV: noSRV, Dial: dial}
+}
+
+// dialsBy answers each address on its own: an open path for the ones listed in
+// open, a timeout for everything else. It records what was dialled.
+func dialsBy(t *testing.T, dialled *[]string, open ...string) DialContext {
+	t.Helper()
+	var mu sync.Mutex
+	return func(_ context.Context, _ string, address string) (net.Conn, error) {
+		mu.Lock()
+		*dialled = append(*dialled, address)
+		mu.Unlock()
+		for _, candidate := range open {
+			if candidate == address {
+				ours, theirs := net.Pipe()
+				t.Cleanup(func() { _ = theirs.Close() })
+				return ours, nil
+			}
+		}
+		return nil, &net.OpError{Op: "dial", Err: context.DeadlineExceeded}
+	}
+}
+
 func TestCheck(t *testing.T) {
 	t.Parallel()
 
@@ -54,8 +84,8 @@ func TestCheck(t *testing.T) {
 			want:     Unknown,
 		},
 		{
-			name:     "a host without a port cannot be dialled",
-			hostPort: "db.example.com",
+			name:     "only separators is no host either",
+			hostPort: " , ,",
 			want:     Unknown,
 		},
 		{
@@ -124,7 +154,7 @@ func TestCheck(t *testing.T) {
 			if dial == nil {
 				dial = dialsTo(t)
 			}
-			if got := Check(context.Background(), test.hostPort, lookup, dial, time.Second); got != test.want {
+			if got := Check(context.Background(), test.hostPort, network(lookup, dial), time.Second); got != test.want {
 				t.Errorf("Check(%q) = %q, want %q", test.hostPort, got, test.want)
 			}
 		})
@@ -134,7 +164,109 @@ func TestCheck(t *testing.T) {
 func TestCheckReportsAnOpenPathAsReachable(t *testing.T) {
 	t.Parallel()
 
-	got := Check(context.Background(), "db.example.com:10260", resolvesTo("203.0.113.7"), dialsTo(t), time.Second)
+	got := Check(context.Background(), "db.example.com:10260", network(resolvesTo("203.0.113.7"), dialsTo(t)), time.Second)
+	if got != Reachable {
+		t.Errorf("Check() = %q, want %q", got, Reachable)
+	}
+}
+
+// What a resolved mongodb+srv:// address — every Atlas cluster — reports as
+// its host: a seed list. Reading only the single-server form made all of them
+// Unknown, which is what the screen said on the machine this was found on.
+func TestCheckReadsASeedList(t *testing.T) {
+	t.Parallel()
+
+	const seed = "ac-a-shard-00-00.x.mongodb.net:27017,ac-a-shard-00-01.x.mongodb.net:27017,ac-a-shard-00-02.x.mongodb.net:27017"
+
+	tests := []struct {
+		name   string
+		lookup LookupHost
+		open   []string
+		want   Verdict
+	}{
+		{
+			name:   "every host closed is the allowlist case",
+			lookup: resolvesTo("203.0.113.7"),
+			want:   Unreachable,
+		},
+		{
+			name:   "one open host is enough, because the driver only needs one",
+			lookup: resolvesTo("203.0.113.7"),
+			open:   []string{"ac-a-shard-00-01.x.mongodb.net:27017"},
+			want:   Reachable,
+		},
+		{
+			name:   "every name gone",
+			lookup: lookupFails(&net.DNSError{Err: "no such host", IsNotFound: true}),
+			want:   Unresolved,
+		},
+		{
+			name: "a host that could not be asked leaves the store unknown",
+			lookup: func(_ context.Context, host string) ([]string, error) {
+				if host == "ac-a-shard-00-00.x.mongodb.net" {
+					return nil, &net.DNSError{Err: "timeout", IsTimeout: true}
+				}
+				return []string{"203.0.113.7"}, nil
+			},
+			want: Unknown,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var dialled []string
+			got := Check(context.Background(), seed, network(test.lookup, dialsBy(t, &dialled, test.open...)), time.Second)
+			if got != test.want {
+				t.Errorf("Check() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// A connection string that names no port means MongoDB's default.
+func TestCheckDialsTheDefaultPortForAHostWithoutOne(t *testing.T) {
+	t.Parallel()
+
+	var dialled []string
+	got := Check(context.Background(), "db.example.com", network(resolvesTo("203.0.113.7"), dialsBy(t, &dialled, "db.example.com:27017")), time.Second)
+	if got != Reachable {
+		t.Errorf("Check() = %q, want %q", got, Reachable)
+	}
+	if len(dialled) != 1 || dialled[0] != "db.example.com:27017" {
+		t.Errorf("dialled %v, want only db.example.com:27017", dialled)
+	}
+}
+
+// A mongodb+srv:// credential kept from before the app converted them reports
+// the name of an SRV record, which usually has no address of its own. Probing
+// that name directly would call a working cluster Unresolved.
+func TestCheckFollowsTheSRVRecordOfAClusterName(t *testing.T) {
+	t.Parallel()
+
+	var dialled []string
+	lookupSRV := func(_ context.Context, service, proto, name string) (string, []*net.SRV, error) {
+		if service != "mongodb" || proto != "tcp" || name != "cluster0.x.mongodb.net" {
+			t.Errorf("LookupSRV(%q, %q, %q), want the cluster's _mongodb._tcp record", service, proto, name)
+		}
+		return "", []*net.SRV{
+			{Target: "ac-a-shard-00-00.x.mongodb.net.", Port: 27017},
+			{Target: "ac-a-shard-00-01.x.mongodb.net.", Port: 27017},
+		}, nil
+	}
+	// The cluster name itself resolves to nothing, as it does on Atlas.
+	lookup := func(_ context.Context, host string) ([]string, error) {
+		if host == "cluster0.x.mongodb.net" {
+			return nil, &net.DNSError{Err: "no such host", IsNotFound: true}
+		}
+		return []string{"203.0.113.7"}, nil
+	}
+
+	got := Check(context.Background(), "cluster0.x.mongodb.net", Network{
+		LookupHost: lookup,
+		LookupSRV:  lookupSRV,
+		Dial:       dialsBy(t, &dialled, "ac-a-shard-00-01.x.mongodb.net:27017"),
+	}, time.Second)
 	if got != Reachable {
 		t.Errorf("Check() = %q, want %q", got, Reachable)
 	}
@@ -151,7 +283,7 @@ func TestCheckDoesNotLookUpANumericAddress(t *testing.T) {
 		return nil, errors.New("no resolver on this machine")
 	}
 
-	if got := Check(context.Background(), "203.0.113.7:10260", lookup, dialsTo(t), time.Second); got != Reachable {
+	if got := Check(context.Background(), "203.0.113.7:10260", network(lookup, dialsTo(t)), time.Second); got != Reachable {
 		t.Errorf("Check() = %q, want %q", got, Reachable)
 	}
 	if asked {
