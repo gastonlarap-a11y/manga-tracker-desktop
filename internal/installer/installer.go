@@ -53,12 +53,21 @@ const (
 	// KindNoPayload — a development build. It cannot install, which is not a
 	// fault, and saying so beats offering a button that fails.
 	KindNoPayload Kind = "noPayload"
+	// KindSetupFailed — this build carries a backend and could not get it onto
+	// disk, or could not bring it back after an update. A real fault, kept
+	// apart from KindNoPayload: that is what it used to arrive as, and the
+	// window then told someone holding a release that theirs was a development
+	// build.
+	KindSetupFailed Kind = "setupFailed"
 )
 
 type State struct {
 	Kind    Kind   `json:"kind"`
 	BaseURL string `json:"baseUrl"`
 	Version string `json:"version"`
+	// Detail is the technical reason behind KindSetupFailed, shown under a
+	// sentence the window writes. Empty for every other kind.
+	Detail string `json:"detail"`
 }
 
 // Result of an install that went through.

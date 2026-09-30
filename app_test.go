@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -235,5 +237,181 @@ func TestRetrySyncReportsAConnectionThatCameBack(t *testing.T) {
 	// timed out on this dialler if it had been run.
 	if outcome.Reach != "" {
 		t.Errorf("Reach = %q, want it left empty", outcome.Reach)
+	}
+}
+
+// preparing is a machine whose Prepare runs for real against fakes: a build
+// with a payload, a tree that is not this version yet, and no service
+// registered. extract answers each extraction in turn.
+type preparing struct {
+	mu          sync.Mutex
+	extractions int
+	probed      bool
+}
+
+func (p *preparing) deps(found string, extract func(attempt int) error) installer.Deps {
+	return installer.Deps{
+		DataDir: "/data/MangaTracker",
+		Discover: func(context.Context) string {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			p.probed = true
+			return found
+		},
+		Available: func() bool { return true },
+		Extracted: func(string) bool { return false },
+		Extract: func(string) error {
+			p.mu.Lock()
+			p.extractions++
+			attempt := p.extractions
+			p.mu.Unlock()
+			return extract(attempt)
+		},
+		Call: func(context.Context, string, ...string) (servicecli.Reply, error) {
+			return servicecli.Reply{OK: true}, nil
+		},
+	}
+}
+
+func (p *preparing) wasProbed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.probed
+}
+
+// Wails runs OnStartup on its own goroutine while the window loads, so the
+// window's first Look can arrive while Prepare is still extracting. It has to
+// wait: answering then described a half-written tree as the machine's state.
+func TestLookWaitsUntilStartupHasPrepared(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	machine := &preparing{}
+	app := &App{
+		prepared: make(chan struct{}),
+		deps: machine.deps("", func(int) error {
+			<-release
+			return nil
+		}),
+	}
+
+	go app.startup(context.Background())
+	looked := make(chan installer.State, 1)
+	go func() { looked <- app.Look() }()
+
+	select {
+	case state := <-looked:
+		t.Fatalf("Look() = %+v while Prepare was still extracting", state)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if machine.wasProbed() {
+		t.Fatal("Look probed for a backend while Prepare was still extracting")
+	}
+
+	close(release)
+	select {
+	case state := <-looked:
+		if state.Kind != installer.KindInstallable {
+			t.Errorf("Kind = %q, want %q once the tree is on disk", state.Kind, installer.KindInstallable)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Look never answered after Prepare finished")
+	}
+}
+
+// A release that could not write its server out used to be reported as a
+// development build, with the error in a field the window never showed.
+func TestLookReportsAFailedPreparationAsSuch(t *testing.T) {
+	t.Parallel()
+
+	machine := &preparing{}
+	app := &App{
+		prepared: make(chan struct{}),
+		deps: machine.deps("", func(int) error {
+			return errors.New("no space left on device")
+		}),
+	}
+	app.startup(context.Background())
+
+	state := app.Look()
+	if state.Kind != installer.KindSetupFailed {
+		t.Fatalf("Kind = %q, want %q", state.Kind, installer.KindSetupFailed)
+	}
+	if !strings.Contains(state.Detail, "no space left on device") {
+		t.Errorf("Detail = %q, want the reason it failed", state.Detail)
+	}
+}
+
+// "Buscar de nuevo" after freeing the disk has to actually try again, and once
+// it has worked it must not keep re-extracting on every look.
+func TestLookRetriesAFailedPreparationOnce(t *testing.T) {
+	t.Parallel()
+
+	machine := &preparing{}
+	app := &App{
+		prepared: make(chan struct{}),
+		deps: machine.deps("", func(attempt int) error {
+			if attempt == 1 {
+				return errors.New("no space left on device")
+			}
+			return nil
+		}),
+	}
+	app.startup(context.Background())
+
+	if state := app.Look(); state.Kind != installer.KindInstallable {
+		t.Fatalf("Kind = %q, want %q after the retry worked", state.Kind, installer.KindInstallable)
+	}
+	app.Look()
+	if machine.extractions != 2 {
+		t.Errorf("extractions = %d, want 2: the failed one and the retry", machine.extractions)
+	}
+}
+
+// The previous version still answering is worth showing, failure or not:
+// hiding a working library behind an update that did not land helps nobody.
+func TestLookShowsARunningBackendEvenIfPreparationFailed(t *testing.T) {
+	t.Parallel()
+
+	machine := &preparing{}
+	app := &App{
+		prepared: make(chan struct{}),
+		deps: machine.deps("http://127.0.0.1:5150", func(int) error {
+			return errors.New("access is denied")
+		}),
+	}
+	app.startup(context.Background())
+
+	if state := app.Look(); state.Kind != installer.KindRunning {
+		t.Errorf("Kind = %q, want %q", state.Kind, installer.KindRunning)
+	}
+}
+
+// With no data directory, deps are never wired. Startup used to call into them
+// anyway and panic, so the error meant to be shown never was.
+func TestNoDataDirectoryIsReportedRatherThanCrashing(t *testing.T) {
+	t.Parallel()
+
+	app := &App{
+		prepared:   make(chan struct{}),
+		client:     &http.Client{Timeout: time.Second},
+		dataDirErr: errors.New("could not find a place to install into"),
+	}
+	app.startup(context.Background())
+
+	if state := app.Look(); state.Kind != installer.KindSetupFailed {
+		t.Errorf("Look().Kind = %q, want %q", state.Kind, installer.KindSetupFailed)
+	}
+	if _, err := app.Install(); err == nil {
+		t.Error("Install() succeeded with no data directory")
+	}
+	if settings := app.Settings(); settings.Problem == "" {
+		t.Error("Settings().Problem is empty with no data directory")
+	}
+	if _, err := app.SetSync("mongodb://db.example.com:27017", ""); err == nil {
+		t.Error("SetSync() succeeded with no data directory")
+	}
+	if err := app.StartService(); err == nil {
+		t.Error("StartService() succeeded with no data directory")
 	}
 }
