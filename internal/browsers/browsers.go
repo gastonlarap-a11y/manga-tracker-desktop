@@ -11,6 +11,7 @@ import (
 	neturl "net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -32,11 +33,29 @@ type candidate struct {
 	paths []string
 }
 
-func macCandidates() []candidate {
+// macCandidates looks in /Applications and then in the user's own
+// ~/Applications, which is where a browser installed without an administrator
+// password lands. An empty home skips the second: joined onto nothing it would
+// be a path relative to wherever the app happened to start.
+//
+// path, not filepath: these are macOS paths wherever they are built, and the
+// tests that describe a Mac also run on the Windows CI runner.
+func macCandidates(home string) []candidate {
+	dirs := []string{"/Applications"}
+	if home != "" {
+		dirs = append(dirs, path.Join(home, "Applications"))
+	}
+	bundle := func(name string) []string {
+		paths := make([]string, 0, len(dirs))
+		for _, dir := range dirs {
+			paths = append(paths, path.Join(dir, name))
+		}
+		return paths
+	}
 	return []candidate{
-		{id: "chrome", name: "Google Chrome", paths: []string{"/Applications/Google Chrome.app"}},
-		{id: "brave", name: "Brave", paths: []string{"/Applications/Brave Browser.app"}},
-		{id: "edge", name: "Microsoft Edge", paths: []string{"/Applications/Microsoft Edge.app"}},
+		{id: "chrome", name: "Google Chrome", paths: bundle("Google Chrome.app")},
+		{id: "brave", name: "Brave", paths: bundle("Brave Browser.app")},
+		{id: "edge", name: "Microsoft Edge", paths: bundle("Microsoft Edge.app")},
 	}
 }
 
@@ -67,7 +86,13 @@ func Detect() []Browser {
 	if runtime.GOOS == "windows" {
 		return detectIn(windowsCandidates(os.Getenv), exists)
 	}
-	return detectIn(macCandidates(), exists)
+	// Without a home directory there is still /Applications to look in; not
+	// finding one only narrows the search, it does not stop it.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ""
+	}
+	return detectIn(macCandidates(home), exists)
 }
 
 // detectIn takes the candidates and the existence check as parameters, so the
@@ -140,18 +165,38 @@ func openWith(found []Browser, id, url string, run func(path, url string) error)
 
 func launch(path, url string) error {
 	if runtime.GOOS == "windows" {
-		return exec.Command(path, url).Start()
+		return startDetached(exec.Command(path, url))
 	}
 	// `open -a` targets one application bundle; plain `open` would hand the URL
-	// to whichever browser is the default, which is the thing to avoid.
-	return exec.Command("open", "-a", path, url).Start()
+	// to whichever browser is the default, which is the thing to avoid. Run, not
+	// Start: `open` returns as soon as the browser has the URL, and waiting for
+	// it is what surfaces its error ("Unable to find application") and reaps it,
+	// instead of leaving a zombie behind every click.
+	return exec.Command("open", "-a", path, url).Run()
 }
 
-// Reveal opens a folder in the system's file manager, for the manual
-// "Load unpacked" path while the store review is pending.
+// Reveal opens a folder in the system's file manager, for loading the
+// extension unpacked — a development build, or a copy loaded by hand.
 func Reveal(dir string) error {
 	if runtime.GOOS == "windows" {
-		return exec.Command("explorer", dir).Start()
+		// Not Run: explorer exits with status 1 even when it opened the
+		// folder, so its exit status says nothing.
+		return startDetached(exec.Command("explorer", dir))
 	}
-	return exec.Command("open", dir).Start()
+	return exec.Command("open", dir).Run()
+}
+
+// startDetached starts a program that goes on running on its own — a browser,
+// the file manager — and reaps it whenever it exits. Waiting inline would hold
+// the window until someone closed their browser.
+func startDetached(command *exec.Cmd) error {
+	if err := command.Start(); err != nil {
+		return err
+	}
+	go func() {
+		// The exit status of a program handed off to the person is not
+		// something this app acts on; Wait is here to release the process.
+		_ = command.Wait()
+	}()
+	return nil
 }

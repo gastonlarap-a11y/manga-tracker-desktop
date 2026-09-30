@@ -3,9 +3,60 @@ package servicecli
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
+
+// TestHelperProcess is not a test: it is the program the stderr test runs, so
+// that test gets a real *exec.ExitError on every platform without depending on
+// a shell. It does nothing unless that test asked for it.
+func TestHelperProcess(t *testing.T) {
+	if os.Getenv("SERVICECLI_HELPER") != "1" {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "error: Cannot find module './index.js'")
+	os.Exit(1)
+}
+
+// A program that died before printing its JSON used to reach the screen as
+// "exit status 1". What it said on stderr is the part worth reading.
+func TestCallShowsWhatTheProgramSaidOnStderr(t *testing.T) {
+	t.Parallel()
+
+	failing := Client{Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelperProcess$")
+		command.Env = append(os.Environ(), "SERVICECLI_HELPER=1")
+		return command.Output()
+	}}
+
+	_, err := failing.Call(context.Background(), "status")
+	if err == nil || !strings.Contains(err.Error(), "Cannot find module") {
+		t.Errorf("Call() error = %v, want it to carry what the program wrote to stderr", err)
+	}
+}
+
+// A command that never returns is stopped, and said to have been stopped —
+// not reported as "signal: killed", which reads like a crash.
+func TestCallNamesATimeoutAsOne(t *testing.T) {
+	t.Parallel()
+
+	hung := Client{
+		Timeout: 20 * time.Millisecond,
+		Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+			<-ctx.Done()
+			return nil, errors.New("signal: killed")
+		},
+	}
+
+	_, err := hung.Call(context.Background(), "install")
+	if err == nil || !strings.Contains(err.Error(), "no answer within") {
+		t.Errorf("Call() error = %v, want a timeout named as one", err)
+	}
+}
 
 // answers builds a Command that returns a fixed stdout and error, and records
 // what it was asked to run.

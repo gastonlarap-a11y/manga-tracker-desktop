@@ -35,7 +35,14 @@ type View =
   // development build, which for someone holding a release is simply untrue.
   | { kind: "setupFailed"; detail: string }
   | { kind: "refused"; message: string }
-  | { kind: "failed"; reason: string };
+  // Which button failed, because the sentence depends on it: a service that
+  // would not start used to be reported as an installation that did not finish.
+  | { kind: "failed"; action: "install" | "start"; reason: string };
+
+const FAILURES: Record<"install" | "start", string> = {
+  install: "No se pudo completar la instalación.",
+  start: "No se pudo arrancar el servicio.",
+};
 
 /**
  * A refusal is the guard working, not a fault, so it reads as an explanation
@@ -78,8 +85,12 @@ function App() {
       if (typeof url !== "string") {
         return;
       }
-      // The scheme is validated on the Go side, in one place.
-      void OpenChapter(url);
+      // The scheme is validated on the Go side, in one place. Its only refusal
+      // is a link that is not http(s), which is refused on purpose and has
+      // nowhere on screen to be explained: the click came from inside the frame.
+      void OpenChapter(url).catch((reason: unknown) =>
+        console.warn("[manga-tracker] chapter link not opened", url, reason),
+      );
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -119,7 +130,7 @@ function App() {
     void StartService()
       .then(look)
       .catch((reason: unknown) =>
-        setView({ kind: "failed", reason: String(reason) }),
+        setView({ kind: "failed", action: "start", reason: String(reason) }),
       );
   }, [look]);
 
@@ -139,7 +150,7 @@ function App() {
         setView({ kind: "connected", baseUrl: outcome.baseUrl });
       })
       .catch((reason: unknown) =>
-        setView({ kind: "failed", reason: String(reason) }),
+        setView({ kind: "failed", action: "install", reason: String(reason) }),
       );
   }, []);
 
@@ -279,7 +290,7 @@ function App() {
 
         {view.kind === "failed" && (
           <div className="message">
-            <p>No se pudo completar la instalación.</p>
+            <p>{FAILURES[view.action]}</p>
             <p className="detail reason">{view.reason}</p>
             <button type="button" className="action" onClick={look}>
               Reintentar

@@ -39,11 +39,21 @@ var ErrNotFound = errors.New("this machine's public address could not be determi
 
 // Client is an HTTP client pinned to IPv4, which is the point of building one
 // here rather than taking the default.
+//
+// A fresh one per question, so keep-alives are off: a Transport built and
+// dropped with idle connections in it holds them open forever — its idle
+// timeout is none unless set.
+//
+// No proxy, deliberately. The address wanted is the one the database sees, and
+// the backend's connection to it never goes through an HTTP proxy: asked
+// through one, the answer would be the proxy's address, stated as this
+// machine's, for an allowlist it would not fix.
 func Client(timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{Timeout: timeout}
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
+			DisableKeepAlives: true,
 			DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
 				return dialer.DialContext(ctx, "tcp4", address)
 			},
