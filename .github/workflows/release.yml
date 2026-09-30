@@ -1,9 +1,10 @@
 # Builds the thing people actually download.
 #
 # Everything that ships is assembled here: the backend and its migrations, the
-# dashboard build, the browser extension for loading unpacked while the store
-# review is pending, and a Bun to run all of it. That tree is embedded in the
-# app binary and extracted on first launch.
+# dashboard build, the browser extension for loading unpacked (a development
+# build, or a copy loaded by hand — the published one comes from the Web
+# Store), and a Bun to run all of it. That tree is embedded in the app binary
+# and extracted on first launch.
 #
 # The sibling repositories are checked out at the commits pinned in
 # sources.json, not at main. A release has to be rebuildable, and a broken
@@ -21,8 +22,11 @@ on:
   # Buildable without publishing, to check the pipeline before cutting a tag.
   workflow_dispatch:
 
+# Read-only by default. The build jobs run `bun install` for three
+# repositories' dependencies, and a token that could push to this one has no
+# business there; only `publish` below gets write.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -153,11 +157,13 @@ jobs:
           mv wails.stamped.json wails.json
           echo "payload: ${ref} · bundle: ${version}"
 
+      # The Azure resource names, and what the api's operator manifest holds —
+      # the same list manga-tracker-api's own package smoke test greps for.
       - name: Verify no personal infrastructure is in the payload
         run: |
           set -euo pipefail
-          if grep -rIl "kv-mangatracker\|rg-proyectos-personales" internal/payload/dist 2>/dev/null; then
-            echo "::error::Azure resource names ended up in the payload"
+          if grep -rIlE "kv-mangatracker|rg-proyectos-personales|mangatracker-mongodb-url|mangatracker_dev" internal/payload/dist 2>/dev/null; then
+            echo "::error::personal infrastructure or operator configuration ended up in the payload"
             exit 1
           fi
           echo "clean: nothing personal in what ships"
@@ -281,11 +287,20 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # The one job that writes: it creates the release and uploads to it.
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
+
+      # Neither installer is signed, so a checksum is the only way someone can
+      # tell the file they downloaded is the one this workflow built.
+      - name: Checksum the installers
+        working-directory: artifacts
+        run: sha256sum Manga-Tracker-* > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@v2
         with:

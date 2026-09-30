@@ -34,17 +34,28 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      # The Bun the release bundles, read from where the release reads it, so
+      # CI and the shipped app never disagree about which one they mean.
+      - name: Read the pinned Bun
+        id: bun
+        run: echo "version=$(jq -r '.bun.version' sources.json)" >> "$GITHUB_OUTPUT"
+
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ steps.bun.outputs.version }}
 
       # The frontend has to be built first: main.go embeds frontend/dist, which
-      # is gitignored, so `go build` on a fresh clone fails without this.
+      # is gitignored, so `go build` on a fresh clone fails without this. The
+      # build is also the typecheck (`tsc -b`).
       - name: Build the frontend
         working-directory: frontend
         run: |
           bun install --frozen-lockfile
           bun run build
+
+      - name: Test the frontend
+        working-directory: frontend
+        run: bun run test
 
       - name: Vet
         run: go vet ./...
@@ -52,5 +63,7 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # -race where the runner has the C toolchain it needs without setup; the
+      # Windows leg still runs every test, just without the detector.
       - name: Test
-        run: go test ./...
+        run: go test ${{ matrix.os == 'macos-latest' && '-race' || '' }} ./...

@@ -3,9 +3,10 @@
 Desktop app (Wails v2, Go + React) that makes the local-first manga tracker installable by
 someone who does not program. One download, and the browser extension is one click away.
 
-**Current state.** The window works: it finds the backend on this machine and shows the
-dashboard it serves. The installer and the settings screen are not written yet — do not
-describe them here as done.
+**Current state.** Released and in use: the installer (first install, and updating the backend
+in place when a newer app is installed over an older one), the window, and the settings
+screen (sync with a diagnosis of why it is down, the extension, which browser opens a
+chapter). macOS Apple Silicon and Windows x64, from GitHub Releases.
 
 Sibling repos, consumed but never merged into this one:
 - `../manga-tracker-api` — the backend. Runs as a **system service**, not as a child of this
@@ -36,6 +37,11 @@ working. It is a control panel, not a runtime.
   anything worth testing lives under `internal/`
 - `internal/backend/` — finds the running backend (`GET /health` over 5150-5159, matching on
   `service`). Pure Go with no Wails import, so `go test` reaches it
+- `internal/installer/` — what the window offers and does about the backend: `Look` (running,
+  installable, stopped, unknown, setup failed, development build), `Install`, and `Prepare`,
+  the startup step that extracts the payload and moves an installed backend to it
+  (stop → extract → repair). Its dependencies are fields of `Deps`, so the orchestration is
+  tested without launchd, the Task Scheduler or a real filesystem
 - `internal/servicecli/` — spawns the backend's bundled `service.js` and reads its JSON.
   Registering a launchd agent or a Windows task correctly is already written and tested in
   `manga-tracker-api/deploy/lib`; this calls it rather than reimplementing it in Go
@@ -79,8 +85,12 @@ working. It is a control panel, not a runtime.
 
 ## Commands
 - Dev: `wails dev` · Build: `wails build`
-- Frontend alone: `cd frontend && bun run build`
-- Go: `go vet ./...` · `go test ./...`
+- Frontend alone: `cd frontend && bun run build` — `tsc -b` then Vite. **`-b`, not bare
+  `tsc`**: `tsconfig.json` is a solution file with no files of its own, and the bare `tsc` the
+  script used to run checked nothing and passed every time
+- Frontend tests: `cd frontend && bun run test` (`bun test`; pure logic lives in modules like
+  `src/syncOutcome.ts` so it is tested without rendering)
+- Go: `go vet ./...` · `go test -race ./...`
 
 ## Rules
 - **Never vendor the sibling repos.** They are consumed as released artifacts; a copy of
@@ -219,8 +229,8 @@ working. It is a control panel, not a runtime.
   ~130 ms**, and a second launch skips it in microseconds. The app binary is ~96 MB.
 
 ## Engineering standards
-- Every feature ships with its tests. `go vet` + `go test` + the frontend build must pass on
-  macOS and Windows before declaring work done; report real results.
+- Every feature ships with its tests. `go vet` + `go test` + the frontend build and tests must
+  pass on macOS and Windows before declaring work done; report real results.
 - Handle errors explicitly at boundaries: a bound method returns an error the frontend can
   render, never a silent failure.
 - UI strings are Spanish; code, identifiers and comments are English.

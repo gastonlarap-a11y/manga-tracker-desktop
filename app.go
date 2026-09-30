@@ -28,11 +28,12 @@ import (
 // broken connection still answers.
 const reachTimeout = 8 * time.Second
 
-// StoreURL is where the extension lives once Google approves it.
+// StoreURL is the extension's Chrome Web Store listing, approved 2026-08-10.
 //
-// Configuration rather than compiled-in behaviour: while the review is pending
-// the settings screen shows the manual path beside it, and the day it is
-// approved nothing here has to change for the one-click button to work.
+// Configuration rather than compiled-in behaviour, which is what let the
+// one-click button start working on approval without a new version. The
+// settings screen still offers loading it unpacked, for a development build or
+// a copy loaded by hand.
 const StoreURL = "https://chromewebstore.google.com/detail/acopmmaenbjdpcjcaiadcpdniomkikbd"
 
 // App is the struct bound to the frontend: every exported method on it is

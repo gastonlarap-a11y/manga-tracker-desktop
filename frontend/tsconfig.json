@@ -1,7 +1,11 @@
 {
   "files": [],
+  // A solution file: `tsc` alone checks nothing here, because it has no files
+  // of its own. The build runs `tsc -b`, which follows these references — the
+  // plain `tsc` it used to run listed zero files and passed every time.
   "references": [
     { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" }
+    { "path": "./tsconfig.node.json" },
+    { "path": "./tsconfig.test.json" }
   ]
 }
