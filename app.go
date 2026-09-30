@@ -52,9 +52,10 @@ type App struct {
 	prepareMu  sync.Mutex
 	prepareErr error
 	client     *http.Client
-	// The network probe's two dependencies, as fields so a test can answer
-	// them without a resolver or a socket. Nil means the real ones.
+	// The network probe's dependencies, as fields so a test can answer them
+	// without a resolver or a socket. Nil means the real ones.
 	lookupHost  reach.LookupHost
+	lookupSRV   reach.LookupSRV
 	dialContext reach.DialContext
 }
 
@@ -526,26 +527,32 @@ func (a *App) awaitSyncOrFallBack() (SyncOutcome, error) {
 
 // reachOfSync tests the network path to wherever sync points.
 //
-// An empty hostPort asks the service control where that is, which is the only
+// Empty hosts asks the service control where that is, which is the only
 // component that knows: the address lives beside the credential, and the
-// credential never travels here.
-func (a *App) reachOfSync(hostPort string) reach.Verdict {
-	if hostPort == "" {
+// credential never travels here. What it reports may be a whole seed list.
+func (a *App) reachOfSync(hosts string) reach.Verdict {
+	if hosts == "" {
 		reply, err := a.service("status")
 		if err != nil {
 			return reach.Unknown
 		}
-		hostPort = reply.SyncHost
+		hosts = reply.SyncHost
 	}
-	lookup := a.lookupHost
-	if lookup == nil {
-		lookup = net.DefaultResolver.LookupHost
+	network := reach.Network{
+		LookupHost: a.lookupHost,
+		LookupSRV:  a.lookupSRV,
+		Dial:       a.dialContext,
 	}
-	dial := a.dialContext
-	if dial == nil {
-		dial = (&net.Dialer{}).DialContext
+	if network.LookupHost == nil {
+		network.LookupHost = net.DefaultResolver.LookupHost
 	}
-	return reach.Check(a.ctx, hostPort, lookup, dial, reachTimeout)
+	if network.LookupSRV == nil {
+		network.LookupSRV = net.DefaultResolver.LookupSRV
+	}
+	if network.Dial == nil {
+		network.Dial = (&net.Dialer{}).DialContext
+	}
+	return reach.Check(a.ctx, hosts, network, reachTimeout)
 }
 
 // awaitSync reports whether the configuration that was just written connects.

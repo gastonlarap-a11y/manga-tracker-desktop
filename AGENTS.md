@@ -58,8 +58,12 @@ working. It is a control panel, not a runtime.
   there was one field, and a lost browser choice the moment there were two
 - `internal/reach/` — why sync cannot reach its store, by testing the network rather than by
   reading the driver's error text. Resolve the name, dial the port, and answer `unresolved`,
-  `unreachable`, `reachable` or `unknown`. Its two dependencies are parameters, so the tests
-  touch neither a resolver nor a socket
+  `unreachable`, `reachable` or `unknown`. The sync host is **a seed list** for any cluster —
+  every resolved `mongodb+srv://`, so every Atlas one — and may carry no port (27017) or be an
+  SRV name kept from before conversion (its record is followed). Reading only `name:port`
+  made every Atlas cluster `unknown`, and the keystore fallback never ran. Its network
+  dependencies are parameters (`reach.Network`), so the tests touch neither a resolver nor a
+  socket
 - `internal/publicip/` — the address this machine appears to come from, which is the only way
   to learn what an allowlist has to contain. **IPv4 pinned**: on a dual-stack machine an
   unpinned request answers with the IPv6 address, and a firewall rule written from that allows
