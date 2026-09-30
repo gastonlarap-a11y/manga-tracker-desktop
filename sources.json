@@ -2,7 +2,7 @@
   "$comment": "Which commit of each sibling repository a release bundles, and which Bun runs it. Pinned to commits rather than to main, so a tag can be rebuilt later and produce the same app, and so a broken commit landing in a sibling repo cannot silently ship. Bump these deliberately, in a commit of their own.",
   "api": {
     "repository": "gastonlarap-a11y/manga-tracker-api",
-    "commit": "3ddcd5867c9f91886d3336fd38f474601f21eab0"
+    "commit": "28bb39f7681de80ed06a02065f2df526f5ef16e8"
   },
   "dashboard": {
     "repository": "gastonlarap-a11y/manga-tracker-dashboard",
@@ -10,7 +10,7 @@
   },
   "extension": {
     "repository": "gastonlarap-a11y/manga-tracker-extension",
-    "commit": "bc089f567a7605d55a6b37ab0b7eb7c19805ebcd"
+    "commit": "4b9be70be6c4afa151e8d3d8c708ccf3c8650416"
   },
   "bun": {
     "version": "1.3.14"
