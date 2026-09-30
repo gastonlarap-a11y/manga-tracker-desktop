@@ -26,8 +26,8 @@ waits until it answers; from then on it starts at every login on its own. There 
 and nothing to configure.
 
 The browser extension is the one piece that is not automatic — it lives in the browser, not on
-disk. The gear icon installs it, or walks through loading it unpacked while the store review is
-pending. Full walkthrough:
+disk. The gear icon opens its Chrome Web Store page in the browser you choose — Chrome, Brave
+or Edge — and still offers loading it unpacked for a development build. Full walkthrough:
 [manga-tracker-extension](https://github.com/gastonlarap-a11y/manga-tracker-extension#testing-it-end-to-end-about-five-minutes).
 
 ### Updating
@@ -77,9 +77,11 @@ involved), and a dashboard update reaches the window without rebuilding this app
 
 To build it (a user installing the release needs none of this):
 
-- [Go](https://go.dev) 1.26+
-- [Bun](https://bun.sh) 1.3+
-- [Wails CLI v2](https://wails.io/docs/gettingstarted/installation): `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
+- [Go](https://go.dev) 1.23+ (what `go.mod` declares, and what CI builds with)
+- [Bun](https://bun.sh), the version in `sources.json` (1.3.14): the same one the release
+  bundles and CI runs
+- [Wails CLI v2](https://wails.io/docs/gettingstarted/installation), the version the release
+  uses: `go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0`
 
 ## Commands
 
@@ -87,8 +89,9 @@ To build it (a user installing the release needs none of this):
 |---|---|
 | `wails dev` | Development mode with hot reload |
 | `wails build` | Production build into `build/bin/` |
-| `go vet ./...` / `go test ./...` | Go checks |
-| `cd frontend && bun run build` | Frontend alone |
+| `go vet ./...` / `go test -race ./...` | Go checks |
+| `cd frontend && bun run build` | Frontend alone — `tsc -b` (the typecheck), then Vite |
+| `cd frontend && bun run test` | Frontend tests (`bun test`) |
 
 Wails v2 is deliberate: v3 is still in alpha, and this app does not need anything it adds.
 Because the backend runs as a system service, the app's job is small enough for the stable

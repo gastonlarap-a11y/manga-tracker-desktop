@@ -48,8 +48,8 @@ const (
 	// given as --app-dir. Flat on purpose: the CLI looks for the interpreter at
 	// <app-dir>/bun and runs index.js from there.
 	AppSubdir = "app"
-	// ExtensionSubdir holds the MV3 build, for loading unpacked while the
-	// store review is pending.
+	// ExtensionSubdir holds the MV3 build, for loading unpacked — a
+	// development build, or a copy loaded by hand instead of the store's.
 	ExtensionSubdir = "extension"
 )
 

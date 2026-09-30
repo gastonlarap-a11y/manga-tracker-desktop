@@ -148,8 +148,8 @@ func (d Deps) AppDir() string {
 	return filepath.Join(payload.RuntimeDir(d.DataDir), payload.AppSubdir)
 }
 
-// ExtensionDir is the folder to point "Load unpacked" at while the store
-// review is pending.
+// ExtensionDir is the folder to point "Load unpacked" at: a development build,
+// or a copy loaded by hand instead of the store's.
 func (d Deps) ExtensionDir() string {
 	return filepath.Join(payload.RuntimeDir(d.DataDir), payload.ExtensionSubdir)
 }
