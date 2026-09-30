@@ -102,6 +102,52 @@ type Deps struct {
 	CallWithSecret func(ctx context.Context, appDir string, secret string, args ...string) (servicecli.Reply, error)
 	// WaitHealthy blocks until the backend on that port answers, or the context ends.
 	WaitHealthy func(ctx context.Context, port int) error
+	// UpdatePending and SetUpdatePending read and record that an update
+	// stopped a registered service which has not been brought back yet. See
+	// Prepare. Nil means none is ever pending, which is what a test that is
+	// not about interrupted updates wants.
+	UpdatePending    func(dataDir string) bool
+	SetUpdatePending func(dataDir string, pending bool) error
+}
+
+// updatePendingFile lives in the data directory, beside the database and
+// outside runtime/, because runtime/ is exactly what an interrupted update
+// leaves half written.
+const updatePendingFile = ".update-pending"
+
+// UpdatePendingAt is the real UpdatePending: whether the marker is there.
+func UpdatePendingAt(dataDir string) bool {
+	_, err := os.Stat(filepath.Join(dataDir, updatePendingFile))
+	return err == nil
+}
+
+// SetUpdatePendingAt is the real SetUpdatePending.
+func SetUpdatePendingAt(dataDir string, pending bool) error {
+	path := filepath.Join(dataDir, updatePendingFile)
+	if !pending {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("clearing the pending update: %w", err)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return fmt.Errorf("recording the pending update: %w", err)
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		return fmt.Errorf("recording the pending update: %w", err)
+	}
+	return nil
+}
+
+func (d Deps) updatePending() bool {
+	return d.UpdatePending != nil && d.UpdatePending(d.DataDir)
+}
+
+func (d Deps) setUpdatePending(pending bool) error {
+	if d.SetUpdatePending == nil {
+		return nil
+	}
+	return d.SetUpdatePending(d.DataDir, pending)
 }
 
 // Production wires the real implementations.
@@ -122,6 +168,8 @@ func Production(dataDir string) Deps {
 		WaitHealthy: func(ctx context.Context, port int) error {
 			return waitHealthy(ctx, client, port)
 		},
+		UpdatePending:    UpdatePendingAt,
+		SetUpdatePending: SetUpdatePendingAt,
 	}
 }
 
@@ -172,27 +220,47 @@ func (d Deps) ExtensionDir() string {
 // executing the old code until the next login. It is started again immediately
 // after, because someone who just opened the app expects their library, not a
 // gap until they next log in.
+//
+// An update that dies halfway must still end with the backend running. The
+// question "is a service registered?" is put to the CLI inside the tree, and
+// once an extraction has failed that tree is half written and cannot answer —
+// so a retry used to extract, find no service, and leave the one it had
+// stopped stopped. The answer is recorded before the stop instead
+// (SetUpdatePending), outside the tree, and cleared only once repair has
+// brought the backend back.
 func (d Deps) Prepare(ctx context.Context) error {
-	if !d.Available() || d.Extracted(d.DataDir) {
+	if !d.Available() {
+		return nil
+	}
+	pending := d.updatePending()
+	upToDate := d.Extracted(d.DataDir)
+	if upToDate && !pending {
 		return nil
 	}
 
 	// Whether this is a first install or an update is not something to guess at
 	// from the version marker: a machine can have a service registered and no
 	// tree at all, if the data directory was cleared by hand.
-	serviceInstalled := false
-	if status, err := d.Call(ctx, d.AppDir(), "status"); err == nil && status.Installed {
-		serviceInstalled = true
-		// The CLI being asked here is the *old* payload's, and one shipped
-		// before this command existed answers "unknown command". Ignored on
-		// purpose: extraction copes with a tree still in use, and refusing to
-		// update because the previous version could not stop itself would
-		// strand exactly the people an update is for.
-		_, _ = d.Call(ctx, d.AppDir(), "stop")
-	}
+	serviceInstalled := pending
+	if !upToDate {
+		if status, err := d.Call(ctx, d.AppDir(), "status"); err == nil && status.Installed {
+			serviceInstalled = true
+		}
+		if serviceInstalled {
+			if err := d.setUpdatePending(true); err != nil {
+				return err
+			}
+			// The CLI being asked here is the *old* payload's, and one shipped
+			// before this command existed answers "unknown command". Ignored on
+			// purpose: extraction copes with a tree still in use, and refusing
+			// to update because the previous version could not stop itself
+			// would strand exactly the people an update is for.
+			_, _ = d.Call(ctx, d.AppDir(), "stop")
+		}
 
-	if err := d.Extract(d.DataDir); err != nil {
-		return err
+		if err := d.Extract(d.DataDir); err != nil {
+			return err
+		}
 	}
 	if !serviceInstalled {
 		return nil
@@ -209,7 +277,7 @@ func (d Deps) Prepare(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("the update was written but the backend did not come back: %w", err)
 	}
-	return nil
+	return d.setUpdatePending(false)
 }
 
 // Look reports what the app should offer.

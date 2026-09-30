@@ -346,6 +346,102 @@ func TestPrepareSaysSoWhenTheBackendDoesNotComeBack(t *testing.T) {
 	}
 }
 
+// pendingIn gives a recorder an in-memory pending-update marker, the way the
+// real one lives on disk beside the database.
+func pendingIn(r *recorder) *bool {
+	pending := false
+	r.deps.UpdatePending = func(string) bool { return pending }
+	r.deps.SetUpdatePending = func(_ string, value bool) error {
+		pending = value
+		return nil
+	}
+	return &pending
+}
+
+// An update whose extraction failed left the service it had stopped stopped:
+// the retry asked the half-written tree whether a service existed, got no
+// answer, and treated the machine as a first install.
+func TestPrepareBringsBackAServiceAnInterruptedUpdateStopped(t *testing.T) {
+	r := newRecorder("", true, installed(), nil)
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+	pending := pendingIn(r)
+	failing := true
+	r.deps.Extract = func(string) error {
+		r.steps = append(r.steps, "extract")
+		if failing {
+			return errors.New("no space left on device")
+		}
+		return nil
+	}
+
+	if err := r.deps.Prepare(context.Background()); err == nil {
+		t.Fatal("expected the failed extraction to be reported")
+	}
+	if !*pending {
+		t.Fatal("the stopped service was not recorded before the extraction failed")
+	}
+
+	// The retry: the tree cannot say whether a service exists any more.
+	failing = false
+	r.status = servicecli.Reply{}
+	r.failVerb = "status"
+	r.steps = nil
+	if err := r.deps.Prepare(context.Background()); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	if !strings.Contains(strings.Join(r.steps, ","), "repair") {
+		t.Errorf("steps = %v, want the service repaired", r.steps)
+	}
+	if *pending {
+		t.Error("the marker outlived a repair that brought the backend back")
+	}
+}
+
+// Extracted, then the repair failed: the tree is this version, so the old
+// early return skipped everything and the service stayed down for good.
+func TestPrepareRetriesTheRepairOfAnUpdateThatWasWritten(t *testing.T) {
+	r := newRecorder("", true, installed(), nil)
+	r.upToDate = true
+	pending := pendingIn(r)
+	*pending = true
+
+	if err := r.deps.Prepare(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if want := []string{"repair"}; strings.Join(r.steps, ",") != strings.Join(want, ",") {
+		t.Errorf("steps = %v, want only the repair — the tree is already written", r.steps)
+	}
+	if *pending {
+		t.Error("the marker was not cleared after the repair")
+	}
+}
+
+func TestPendingUpdateMarkerRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+
+	if UpdatePendingAt(dir) {
+		t.Fatal("a fresh data directory has an update pending")
+	}
+	if err := SetUpdatePendingAt(dir, true); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !UpdatePendingAt(dir) {
+		t.Fatal("the marker did not stick")
+	}
+	if err := SetUpdatePendingAt(dir, false); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if UpdatePendingAt(dir) {
+		t.Fatal("the marker survived being cleared")
+	}
+	// Clearing what is not there is not an error.
+	if err := SetUpdatePendingAt(dir, false); err != nil {
+		t.Fatalf("clear twice: %v", err)
+	}
+}
+
 func TestPrepareDoesNothingWithoutAPayload(t *testing.T) {
 	// A development build carries no backend. Not a fault, and not something to
 	// report at startup.
