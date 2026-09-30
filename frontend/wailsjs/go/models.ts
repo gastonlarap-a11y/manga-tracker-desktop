@@ -25,6 +25,7 @@ export namespace installer {
 	    kind: string;
 	    baseUrl: string;
 	    version: string;
+	    detail: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new State(source);
@@ -35,6 +36,7 @@ export namespace installer {
 	        this.kind = source["kind"];
 	        this.baseUrl = source["baseUrl"];
 	        this.version = source["version"];
+	        this.detail = source["detail"];
 	    }
 	}
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -39,10 +40,18 @@ const StoreURL = "https://chromewebstore.google.com/detail/acopmmaenbjdpcjcaiadc
 type App struct {
 	ctx  context.Context
 	deps installer.Deps
-	// Resolved once at startup, so failing to even find a data directory is
-	// reported through the window instead of crashing on the first click.
-	setupErr string
-	client   *http.Client
+	// Resolved once, in NewApp. When there is no data directory at all, deps
+	// was never wired, and every method that would reach into it answers with
+	// this instead.
+	dataDirErr error
+	// prepared is closed once startup has finished, and every bound method
+	// that touches the backend waits on it first. See awaitStartup.
+	prepared chan struct{}
+	// prepareMu serialises Prepare: startup runs it, and so does a Look that
+	// finds the previous attempt failed.
+	prepareMu  sync.Mutex
+	prepareErr error
+	client     *http.Client
 	// The network probe's two dependencies, as fields so a test can answer
 	// them without a resolver or a socket. Nil means the real ones.
 	lookupHost  reach.LookupHost
@@ -50,10 +59,13 @@ type App struct {
 }
 
 func NewApp() *App {
-	app := &App{client: &http.Client{Timeout: 5 * time.Second}}
+	app := &App{
+		client:   &http.Client{Timeout: 5 * time.Second},
+		prepared: make(chan struct{}),
+	}
 	dataDir, err := installer.DefaultDataDir()
 	if err != nil {
-		app.setupErr = err.Error()
+		app.dataDirErr = err
 		return app
 	}
 	app.deps = installer.Production(dataDir)
@@ -62,13 +74,71 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Closed on every path, including the one with no data directory: a
+	// window waiting on it forever would be a hang in place of the error.
+	defer a.markStarted()
+	if a.dataDirErr != nil {
+		return
+	}
 	// The service control ships inside the payload, so it has to be on disk
 	// before anything asks it a question — including the settings screen, which
 	// otherwise reports every answer as "not installed". This is also where an
 	// app installed over an older one moves its backend to the new version.
-	if err := a.deps.Prepare(ctx); err != nil && a.setupErr == "" {
-		a.setupErr = err.Error()
+	//
+	// The error is not dropped: prepare keeps it, and the window's first Look
+	// reports it.
+	_ = a.prepare()
+}
+
+func (a *App) markStarted() {
+	if a.prepared != nil {
+		close(a.prepared)
 	}
+}
+
+// awaitStartup blocks until startup has run.
+//
+// Wails 2.12 calls OnStartup on a goroutine of its own, concurrently with
+// loading the window — not before it. So the window's first Look used to run
+// while Prepare was still stopping, extracting and re-registering the backend,
+// and it described that half-done moment as the machine's state: "unknown" on
+// a first launch whose tree was half written, "stopped" during every update,
+// with a button that started a second `repair` alongside the one in progress.
+//
+// A nil channel counts as started, so a test can build an App literal without
+// going through startup.
+func (a *App) awaitStartup() {
+	if a.prepared != nil {
+		<-a.prepared
+	}
+}
+
+// begin is the first call of every bound method that reaches into deps: it
+// waits for startup, and refuses when there is no data directory to work in.
+func (a *App) begin() error {
+	a.awaitStartup()
+	return a.dataDirErr
+}
+
+// prepare runs Prepare and remembers how it went.
+func (a *App) prepare() error {
+	a.prepareMu.Lock()
+	defer a.prepareMu.Unlock()
+	a.prepareErr = a.deps.Prepare(a.ctx)
+	return a.prepareErr
+}
+
+// prepareAgainIfFailed retries a Prepare that failed, and is a no-op after one
+// that succeeded. Prepare is idempotent, so asking again is safe — and it is
+// what "Buscar de nuevo" is for once whatever stopped it has been fixed.
+func (a *App) prepareAgainIfFailed() error {
+	a.prepareMu.Lock()
+	failed := a.prepareErr != nil
+	a.prepareMu.Unlock()
+	if !failed {
+		return nil
+	}
+	return a.prepare()
 }
 
 // Look reports what the window should show: a backend it can display, an offer
@@ -76,11 +146,22 @@ func (a *App) startup(ctx context.Context) {
 //
 // Not finding a backend is a normal answer rather than an error — on a machine
 // where nothing is installed yet it is the expected one.
+//
+// A preparation that failed is its own answer, never "a development build":
+// that is what it used to arrive as, with the error tucked into the version
+// field the window does not show. The one exception is a backend that answers
+// anyway — the previous version, still running — which is worth showing
+// rather than hiding behind the failure.
 func (a *App) Look() installer.State {
-	if a.setupErr != "" {
-		return installer.State{Kind: installer.KindNoPayload, Version: a.setupErr}
+	if err := a.begin(); err != nil {
+		return installer.State{Kind: installer.KindSetupFailed, Detail: err.Error(), Version: payload.Version()}
 	}
-	return a.deps.Look(a.ctx)
+	prepareErr := a.prepareAgainIfFailed()
+	state := a.deps.Look(a.ctx)
+	if prepareErr != nil && state.Kind != installer.KindRunning {
+		return installer.State{Kind: installer.KindSetupFailed, Detail: prepareErr.Error(), Version: payload.Version()}
+	}
+	return state
 }
 
 // InstallOutcome is what the window gets back.
@@ -103,6 +184,9 @@ type InstallOutcome struct {
 // registered. Overwriting a working service definition, or the data directory
 // beside it, is not something a button should do by accident.
 func (a *App) Install() (InstallOutcome, error) {
+	if err := a.begin(); err != nil {
+		return InstallOutcome{}, err
+	}
 	result, err := a.deps.Install(a.ctx)
 	switch {
 	case errors.Is(err, installer.ErrAlreadyRunning):
@@ -187,6 +271,11 @@ func (a *App) Settings() Settings {
 		Browsers:     browsers.Detect(),
 		StoreURL:     StoreURL,
 	}
+	if err := a.begin(); err != nil {
+		// No data directory: nothing below has anywhere to read from.
+		settings.Problem = err.Error()
+		return settings
+	}
 	// Read before the payload check below: which browser opens a chapter is a
 	// choice a development build can make too.
 	if stored, err := prefs.Load(a.deps.DataDir); err == nil {
@@ -243,6 +332,9 @@ type Diagnosis struct {
 // The window calls it after it has rendered, and only for a sync that is
 // configured and reporting that it is down.
 func (a *App) DiagnoseSync() Diagnosis {
+	if err := a.begin(); err != nil {
+		return Diagnosis{Reach: string(reach.Unknown)}
+	}
 	verdict := a.reachOfSync("")
 	diagnosis := Diagnosis{Reach: string(verdict)}
 	if verdict == reach.Unreachable {
@@ -309,6 +401,9 @@ type SyncOutcome struct {
 // lives in the local SQLite file, there is no automatic sync and no button to
 // trigger one.
 func (a *App) SetSync(pasted string, database string) (SyncOutcome, error) {
+	if err := a.begin(); err != nil {
+		return SyncOutcome{}, err
+	}
 	// What Azure and Atlas hand you is a mongodb+srv:// address, and that is
 	// the one form the backend cannot use on Windows. Rather than refuse the
 	// only string most people have, the app resolves the record here — Go asks
@@ -350,6 +445,9 @@ func hostOf(raw string) string {
 // is not. What comes back is not a helpful error but an authentication failure,
 // or a driver reading half the password as a hostname.
 func (a *App) SetSyncFields(address, user, password, database string) (SyncOutcome, error) {
+	if err := a.begin(); err != nil {
+		return SyncOutcome{}, err
+	}
 	url, problem := syncurl.Build(syncurl.Credentials{
 		Address:  address,
 		User:     user,
@@ -504,6 +602,9 @@ func (a *App) waitForBackend(timeout time.Duration) string {
 // it. Deliberate rather than automatic — turning on a connection to the cloud
 // is not something an install should decide.
 func (a *App) UseStoredSync(database string) (SyncOutcome, error) {
+	if err := a.begin(); err != nil {
+		return SyncOutcome{}, err
+	}
 	reply, err := a.service("use-stored-sync", "--db", syncurl.Database(database))
 	if err != nil {
 		return SyncOutcome{}, err
@@ -520,6 +621,9 @@ func (a *App) UseStoredSync(database string) (SyncOutcome, error) {
 
 // ClearSync turns synchronising off and goes back to local-only.
 func (a *App) ClearSync() error {
+	if err := a.begin(); err != nil {
+		return err
+	}
 	_, err := a.service("clear-sync")
 	return err
 }
@@ -536,6 +640,9 @@ func (a *App) ClearSync() error {
 // here, only the process reading it. And deliberately not the fallback path —
 // a retry must never be a reason to move a credential somewhere weaker.
 func (a *App) RetrySync() (SyncOutcome, error) {
+	if err := a.begin(); err != nil {
+		return SyncOutcome{}, err
+	}
 	if _, err := a.service("restart"); err != nil {
 		return SyncOutcome{}, err
 	}
@@ -554,6 +661,7 @@ func (a *App) RetrySync() (SyncOutcome, error) {
 // not pay for that on every open. The window calls it only when it has
 // something to say about an address.
 func (a *App) PublicAddress() (string, error) {
+	a.awaitStartup()
 	return publicip.Find(a.ctx, publicip.Client(reachTimeout), publicip.Endpoints)
 }
 
@@ -566,6 +674,9 @@ func (a *App) OpenInBrowser(id string) error {
 // RevealExtension opens the folder to point "Load unpacked" at, for a
 // development build or a copy loaded by hand.
 func (a *App) RevealExtension() error {
+	if err := a.begin(); err != nil {
+		return err
+	}
 	return browsers.Reveal(a.deps.ExtensionDir())
 }
 
@@ -577,6 +688,9 @@ func (a *App) RevealExtension() error {
 // while repair also re-registers a definition written by an older version. It
 // keeps the port and the sync settings it finds.
 func (a *App) StartService() error {
+	if err := a.begin(); err != nil {
+		return err
+	}
 	_, err := a.deps.Call(
 		a.ctx, a.deps.AppDir(), "repair", "--app-dir", a.deps.AppDir(), "--data-dir", a.deps.DataDir,
 	)
@@ -592,6 +706,9 @@ func (a *App) StartService() error {
 // Update rather than Save: the file holds more than this one setting now, and
 // writing a Prefs built from the single value in hand would blank the rest.
 func (a *App) SetChapterBrowser(id string) error {
+	if err := a.begin(); err != nil {
+		return err
+	}
 	if id != "" && !browsers.Installed(id) {
 		return errors.New("unknown-browser")
 	}
@@ -615,10 +732,14 @@ func (a *App) OpenChapter(link string) error {
 	if !browsers.IsWebURL(link) {
 		return errors.New("bad-url")
 	}
-	stored, err := prefs.Load(a.deps.DataDir)
-	if err == nil && stored.BrowserID != "" {
-		if err := browsers.Open(stored.BrowserID, link); err == nil {
-			return nil
+	// Without a data directory there is no preference to read, and the system
+	// default is still better than not opening the chapter at all.
+	if err := a.begin(); err == nil {
+		stored, err := prefs.Load(a.deps.DataDir)
+		if err == nil && stored.BrowserID != "" {
+			if err := browsers.Open(stored.BrowserID, link); err == nil {
+				return nil
+			}
 		}
 	}
 	runtime.BrowserOpenURL(a.ctx, link)

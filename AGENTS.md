@@ -190,6 +190,12 @@ working. It is a control panel, not a runtime.
   each bundled-Bun invocation would otherwise open a console window for the second it runs —
   saving a connection flashed three of them across the screen. `servicecli` sets
   `CREATE_NO_WINDOW` on every spawn; a new spawn path must do the same.
+- **Every bound method that reaches into `deps` starts with `a.begin()`.** Wails 2.12 runs
+  `OnStartup` on a goroutine of its own while the window loads, so the first `Look` used to
+  run in the middle of `Prepare` and report a half-extracted tree as "unknown", or a service
+  stopped for an update as "stopped". `begin` waits for startup, and refuses when there is no
+  data directory — `deps` are never wired then. A failed `Prepare` is `KindSetupFailed`, never
+  `KindNoPayload`: that one says "development build", which for a release is untrue.
 - **A credential never goes into a command line.** `CallWithSecret` puts it on the service
   control's stdin; `Call` is for everything else. An argument is readable by every process on
   the machine (`ps`, Task Manager) for as long as the command runs, which is the rule

@@ -30,6 +30,10 @@ type View =
   // Nothing answered and the service could not be asked either.
   | { kind: "unknown" }
   | { kind: "noPayload" }
+  // A release that could not put its server on disk, or bring it back after
+  // an update. Never shown as "noPayload": that screen says this is a
+  // development build, which for someone holding a release is simply untrue.
+  | { kind: "setupFailed"; detail: string }
   | { kind: "refused"; message: string }
   | { kind: "failed"; reason: string };
 
@@ -83,19 +87,31 @@ function App() {
 
   const look = useCallback(() => {
     setView({ kind: "looking" });
-    void Look().then((state) => {
-      if (state.kind === "running") {
-        setView({ kind: "connected", baseUrl: state.baseUrl });
-      } else if (state.kind === "installable") {
-        setView({ kind: "installable" });
-      } else if (state.kind === "stopped") {
-        setView({ kind: "stopped" });
-      } else if (state.kind === "unknown") {
-        setView({ kind: "unknown" });
-      } else {
-        setView({ kind: "noPayload" });
-      }
-    });
+    // Handled on both paths: a Look that rejected used to leave the window on
+    // "Buscando…" forever. A rejection says nothing about what is installed,
+    // so it lands on "unknown" rather than on any screen that claims to know.
+    void Look()
+      .then((state) => {
+        switch (state.kind) {
+          case "running":
+            setView({ kind: "connected", baseUrl: state.baseUrl });
+            return;
+          case "installable":
+          case "stopped":
+          case "noPayload":
+            setView({ kind: state.kind });
+            return;
+          case "setupFailed":
+            setView({ kind: "setupFailed", detail: state.detail });
+            return;
+          default:
+            // "unknown", or a kind this window does not know yet. Either way
+            // it cannot say what is installed — and must not guess
+            // "development build", which is what the old fallthrough did.
+            setView({ kind: "unknown" });
+        }
+      })
+      .catch(() => setView({ kind: "unknown" }));
   }, []);
 
   const start = useCallback(() => {
@@ -231,6 +247,21 @@ function App() {
               Es una compilación de desarrollo. Para verla funcionar, arrancá el
               backend por tu cuenta, o usá el instalador publicado.
             </p>
+            <button type="button" className="action" onClick={look}>
+              Buscar de nuevo
+            </button>
+          </div>
+        )}
+
+        {view.kind === "setupFailed" && (
+          <div className="message">
+            <p>No pude preparar el servidor de Manga Tracker en esta computadora.</p>
+            <p className="detail">
+              Tu biblioteca no se tocó: vive fuera de la carpeta que se estaba
+              escribiendo. Suele ser falta de espacio en el disco, o un permiso
+              sobre la carpeta de datos. Buscar de nuevo lo vuelve a intentar.
+            </p>
+            <p className="detail reason">{view.detail}</p>
             <button type="button" className="action" onClick={look}>
               Buscar de nuevo
             </button>
