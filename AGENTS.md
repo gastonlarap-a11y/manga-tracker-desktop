@@ -148,7 +148,12 @@ working. It is a control panel, not a runtime.
   that command existed answers "unknown command", and refusing to update then would strand
   exactly the people an update is for. Which is why extraction falls back to **renaming** the
   old tree aside (`runtime.old`, cleared on a later launch) when it cannot delete it: Windows
-  allows the rename it denies the unlink.
+  allows the rename it denies the unlink. **An update that dies halfway still ends with the
+  backend running**: before the stop, `.update-pending` is written in the data directory
+  (outside `runtime/`, which is what an interrupted update leaves half written, and whose CLI
+  then cannot say whether a service exists), and it is cleared only after `repair` succeeds —
+  so the retry repairs, and a tree already extracted whose repair failed is repaired without
+  extracting again.
 - **"I could not find out" is a state, never a false.** Four times now a boolean has had to
   grow a companion for it: `Settings.asked` (no service, versus could not ask one),
   `SyncOutcome.settled` (it did not connect, versus it was still restarting when I looked),

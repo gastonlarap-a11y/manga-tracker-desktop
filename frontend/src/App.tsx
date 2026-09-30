@@ -55,7 +55,7 @@ const REFUSALS: Record<string, string> = {
     "Esta computadora ya tiene Manga Tracker instalado, aunque ahora esté detenido. No sobrescribo una instalación existente.",
 };
 
-function App() {
+export function App() {
   const [view, setView] = useState<View>({ kind: "looking" });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -322,5 +322,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
