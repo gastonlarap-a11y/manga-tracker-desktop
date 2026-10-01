@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"manga-tracker-desktop/internal/payload"
 	"manga-tracker-desktop/internal/servicecli"
@@ -103,6 +104,128 @@ func TestLookSaysStoppedWhenTheServiceIsThereButSilent(t *testing.T) {
 
 	if kind := r.deps.Look(context.Background()).Kind; kind != KindStopped {
 		t.Errorf("expected stopped, got %q", kind)
+	}
+}
+
+// discoverAfter answers nothing for the first `silent` probes and the URL
+// from then on — a backend still on its way up — counting every probe.
+func discoverAfter(silent int, url string) (func(context.Context) string, *int) {
+	probes := 0
+	return func(context.Context) string {
+		probes++
+		if probes <= silent {
+			return ""
+		}
+		return url
+	}, &probes
+}
+
+func TestLookWaitsForARegisteredServiceThatIsStillComingUp(t *testing.T) {
+	// The first launch after every update: repair has just restarted the
+	// service, which is registered but not listening yet. Answering at once
+	// said "instalado, pero no responde" with the dashboard a second away.
+	r := newRecorder("", true, installed(), nil)
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+	discover, _ := discoverAfter(3, "http://127.0.0.1:5150")
+	r.deps.Discover = discover
+	r.deps.Settle = 2 * time.Second
+
+	state := r.deps.Look(context.Background())
+
+	if state.Kind != KindRunning || state.BaseURL != "http://127.0.0.1:5150" {
+		t.Errorf("expected the backend once it came up, got %+v", state)
+	}
+}
+
+func TestLookSaysStoppedOnceTheServiceHadItsTime(t *testing.T) {
+	r := newRecorder("", true, installed(), nil)
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+	discover, probes := discoverAfter(1_000, "never")
+	r.deps.Discover = discover
+	r.deps.Settle = 30 * time.Millisecond
+
+	state := r.deps.Look(context.Background())
+
+	if state.Kind != KindStopped {
+		t.Errorf("expected stopped, got %q", state.Kind)
+	}
+	if *probes < 2 {
+		t.Errorf("expected it to probe again while waiting, probed %d times", *probes)
+	}
+}
+
+func TestLookDoesNotWaitWhenNothingIsInstalled(t *testing.T) {
+	// Only a registered service is worth waiting for: a fresh machine gets its
+	// install button straight away.
+	r := newRecorder("", true, installed(), nil)
+	discover, probes := discoverAfter(1_000, "never")
+	r.deps.Discover = discover
+	r.deps.Settle = time.Hour
+
+	if kind := r.deps.Look(context.Background()).Kind; kind != KindInstallable {
+		t.Errorf("expected installable, got %q", kind)
+	}
+	if *probes != 1 {
+		t.Errorf("expected one probe, got %d", *probes)
+	}
+}
+
+func TestLookStopsWaitingWhenTheWindowCloses(t *testing.T) {
+	r := newRecorder("", true, installed(), nil)
+	r.status = servicecli.Reply{OK: true, Installed: true, Port: 5150}
+	r.deps.Settle = time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	if kind := r.deps.Look(ctx).Kind; kind != KindStopped {
+		t.Errorf("expected stopped, got %q", kind)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("expected to give up at once with the context gone, took %s", elapsed)
+	}
+}
+
+func TestStartReturnsOnceTheServiceAnswers(t *testing.T) {
+	r := newRecorder("", true, servicecli.Reply{OK: true, Port: 5157}, nil)
+
+	baseURL, err := r.deps.Start(context.Background())
+
+	if err != nil {
+		t.Fatalf("Start() = %v", err)
+	}
+	if baseURL != "http://127.0.0.1:5157" {
+		t.Errorf("baseURL = %q", baseURL)
+	}
+	if len(r.waited) != 1 || r.waited[0] != 5157 {
+		t.Errorf("expected it to wait on port 5157, waited on %v", r.waited)
+	}
+	if got := r.steps; len(got) != 1 || got[0] != "repair" {
+		t.Errorf("expected a repair, got %v", got)
+	}
+}
+
+func TestStartReportsAServiceThatNeverAnswered(t *testing.T) {
+	r := newRecorder("", true, servicecli.Reply{OK: true, Port: 5157}, nil)
+	r.deps.WaitHealthy = func(context.Context, int) error {
+		return errors.New("timed out after 30s")
+	}
+
+	_, err := r.deps.Start(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), "never answered") {
+		t.Errorf("expected a start that never answered to say so, got %v", err)
+	}
+}
+
+func TestStartRefusesAReplyWithoutAPort(t *testing.T) {
+	r := newRecorder("", true, servicecli.Reply{OK: true}, nil)
+
+	if _, err := r.deps.Start(context.Background()); err == nil {
+		t.Error("expected an error for a repair that reported no port")
+	}
+	if len(r.waited) != 0 {
+		t.Errorf("expected no wait without a port, waited on %v", r.waited)
 	}
 }
 

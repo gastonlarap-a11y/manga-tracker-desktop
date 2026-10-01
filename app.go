@@ -689,7 +689,9 @@ func (a *App) RevealExtension() error {
 	return browsers.Reveal(a.deps.ExtensionDir())
 }
 
-// StartService brings back a backend that is installed but not answering.
+// StartService brings back a backend that is installed but not answering, and
+// returns once it answers (installer.Start), so the Look the window runs next
+// finds it.
 //
 // The action the "stopped" screen offers, because looking again is no use when
 // the service really is down. `repair` rather than `restart` for the reason
@@ -700,9 +702,7 @@ func (a *App) StartService() error {
 	if err := a.begin(); err != nil {
 		return err
 	}
-	_, err := a.deps.Call(
-		a.ctx, a.deps.AppDir(), "repair", "--app-dir", a.deps.AppDir(), "--data-dir", a.deps.DataDir,
-	)
+	_, err := a.deps.Start(a.ctx)
 	return err
 }
 
