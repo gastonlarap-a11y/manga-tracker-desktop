@@ -6,7 +6,7 @@
   },
   "dashboard": {
     "repository": "gastonlarap-a11y/manga-tracker-dashboard",
-    "commit": "2be211f46340a31d0c39e5e783147f1cacfd8f60"
+    "commit": "2e97decf680e0c9af98b88fca230bd9f11a45dff"
   },
   "extension": {
     "repository": "gastonlarap-a11y/manga-tracker-extension",

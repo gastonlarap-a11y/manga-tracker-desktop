@@ -197,6 +197,13 @@ working. It is a control panel, not a runtime.
   itself across two screens: not installed, then already installed. The probe coming back empty
   now asks the service control before concluding anything: registered is `KindStopped` (with a
   button that starts it), and could-not-ask is `KindUnknown`, which offers no install at all.
+  **And registered-but-silent is given time before it is "stopped"** (`Deps.Settle`, 15 s):
+  launchd and the Task Scheduler report a job before its process listens, so answering at
+  once put "instalado, pero no responde" on every launch after an update, with the dashboard
+  a second away. For the same reason `StartService` (`installer.Start`) waits for the port
+  `repair` reports, like `Install` does: returning as soon as the job was registered sent the
+  window back to the screen the button was pressed on, and pressing it again only restarted
+  the backend once more.
 - **The credential lives in the system keystore, and the app finds out whether that works.**
   `set-sync` leaves only a marker in the service's configuration; the bundled launcher reads the
   real value at startup. Whether a service *can* read its own keystore then is not knowable in

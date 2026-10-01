@@ -108,7 +108,20 @@ type Deps struct {
 	// not about interrupted updates wants.
 	UpdatePending    func(dataDir string) bool
 	SetUpdatePending func(dataDir string, pending bool) error
+	// Settle is how long Look keeps probing a registered service that has not
+	// answered yet before calling it stopped (see Look). Zero means no wait,
+	// which is what a test that is not about start-up wants.
+	Settle time.Duration
 }
+
+// DefaultSettle covers a backend coming up: launchd or the Task Scheduler
+// reporting the job, the launcher reading the keystore, the migrations, the
+// listen. Only a service that really is stopped pays for it, on a screen that
+// says "Buscando…" while it does.
+const DefaultSettle = 15 * time.Second
+
+// settleStep is how often a settling service is probed.
+const settleStep = 500 * time.Millisecond
 
 // updatePendingFile lives in the data directory, beside the database and
 // outside runtime/, because runtime/ is exactly what an interrupted update
@@ -170,6 +183,7 @@ func Production(dataDir string) Deps {
 		},
 		UpdatePending:    UpdatePendingAt,
 		SetUpdatePending: SetUpdatePendingAt,
+		Settle:           DefaultSettle,
 	}
 }
 
@@ -287,6 +301,13 @@ func (d Deps) Prepare(ctx context.Context) error {
 // concrete: the service was registered and merely restarting after an update.
 // So when the probe comes back empty, the service control is asked before any
 // conclusion is drawn.
+//
+// And registered-but-silent is not yet "stopped". It is almost always a
+// backend on its way up — right after an update's repair, at login, after
+// Start — because launchd and the Task Scheduler report a job before its
+// process listens. Answering at once is what put "instalado, pero no responde"
+// on every launch after an update, with the dashboard a second away; so the
+// service gets Settle to answer first.
 func (d Deps) Look(ctx context.Context) State {
 	if baseURL := d.Discover(ctx); baseURL != "" {
 		return State{Kind: KindRunning, BaseURL: baseURL, Version: payload.Version()}
@@ -298,10 +319,57 @@ func (d Deps) Look(ctx context.Context) State {
 	if err != nil {
 		return State{Kind: KindUnknown, Version: payload.Version()}
 	}
-	if status.Installed {
-		return State{Kind: KindStopped, Version: payload.Version()}
+	if !status.Installed {
+		return State{Kind: KindInstallable, Version: payload.Version()}
 	}
-	return State{Kind: KindInstallable, Version: payload.Version()}
+	if baseURL := d.awaitDiscover(ctx); baseURL != "" {
+		return State{Kind: KindRunning, BaseURL: baseURL, Version: payload.Version()}
+	}
+	return State{Kind: KindStopped, Version: payload.Version()}
+}
+
+// awaitDiscover probes until a backend answers or Settle runs out, whichever
+// comes first. Empty when nothing answered.
+func (d Deps) awaitDiscover(ctx context.Context) string {
+	if d.Settle <= 0 {
+		return ""
+	}
+	step := min(settleStep, d.Settle)
+	deadline := time.Now().Add(d.Settle)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-time.After(step):
+		}
+		if baseURL := d.Discover(ctx); baseURL != "" {
+			return baseURL
+		}
+	}
+	return ""
+}
+
+// Start brings a registered service back and returns once it answers.
+//
+// `repair`, for the reason Prepare gives. And waited on, like Install: a start
+// that returned as soon as the job was registered sent the window straight
+// back to Look before the backend listened, so "Arrancar el servicio" landed
+// on the very screen it was pressed from — and pressing it again only
+// restarted the backend once more.
+func (d Deps) Start(ctx context.Context) (string, error) {
+	reply, err := d.Call(
+		ctx, d.AppDir(), "repair", "--app-dir", d.AppDir(), "--data-dir", d.DataDir,
+	)
+	if err != nil {
+		return "", err
+	}
+	if reply.Port == 0 {
+		return "", errors.New("the service was started but reported no port")
+	}
+	if err := d.WaitHealthy(ctx, reply.Port); err != nil {
+		return "", fmt.Errorf("the service was started but never answered: %w", err)
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", reply.Port), nil
 }
 
 // ErrAlreadyRunning is returned rather than silently reinstalling.
