@@ -21,12 +21,22 @@ import (
 	"manga-tracker-desktop/internal/reach"
 	"manga-tracker-desktop/internal/servicecli"
 	"manga-tracker-desktop/internal/syncurl"
+	"manga-tracker-desktop/internal/updates"
 )
 
 // reachTimeout bounds the probe that asks why sync is down: long enough for a
 // handshake over a slow link, short enough that a settings screen opened on a
 // broken connection still answers.
 const reachTimeout = 8 * time.Second
+
+// updateTimeout bounds the release check. Nothing waits on it — the notice
+// appears when the answer does — but a request hanging on a dead network
+// should not outlive the reason it was asked.
+const updateTimeout = 10 * time.Second
+
+// UpdateOff is the state CheckForUpdate reports when the user turned the
+// check off: no request is made at all.
+const UpdateOff = "off"
 
 // StoreURL is the extension's Chrome Web Store listing, approved 2026-08-10.
 //
@@ -58,6 +68,16 @@ type App struct {
 	lookupHost  reach.LookupHost
 	lookupSRV   reach.LookupSRV
 	dialContext reach.DialContext
+
+	// This launch's answer from the release check: asked once, remembered,
+	// and asked again only when the window says "Buscar de nuevo". updateMu
+	// guards it, and is held across the request so two callers share one.
+	updateMu sync.Mutex
+	update   *updates.Result
+	// The release check's dependencies, as fields for the same reason as the
+	// probe's. Empty and nil mean the real ones.
+	updateEndpoint string
+	buildVersion   func() string
 }
 
 func NewApp() *App {
@@ -672,6 +692,115 @@ func (a *App) RetrySync() (SyncOutcome, error) {
 func (a *App) PublicAddress() (string, error) {
 	a.awaitStartup()
 	return publicip.Find(a.ctx, publicip.Client(reachTimeout), publicip.Endpoints)
+}
+
+// UpdateStatus is what the window shows about newer releases.
+type UpdateStatus struct {
+	// State is a code from internal/updates — current, available, unknown,
+	// development — or UpdateOff. The window writes the sentence.
+	State   string `json:"state"`
+	Current string `json:"current"`
+	Latest  string `json:"latest"`
+	// Dismissed is the release whose notice was closed: the window announces
+	// that one no more, and the settings screen still lists it.
+	Dismissed string `json:"dismissed"`
+	// Problem is technical detail behind "unknown", shown under a sentence.
+	Problem string `json:"problem"`
+}
+
+// CheckForUpdate says whether a newer release is published.
+//
+// Asked once per launch and remembered; `again` asks anew, for the settings
+// screen's "Buscar de nuevo". Nothing is asked while the user has the check
+// turned off — nor when their preferences cannot be read, since then whether
+// they allowed it is not known either, and asking would be guessing yes.
+func (a *App) CheckForUpdate(again bool) UpdateStatus {
+	status := UpdateStatus{Current: a.version()}
+	if err := a.begin(); err != nil {
+		status.State = string(updates.Unknown)
+		status.Problem = err.Error()
+		return status
+	}
+	stored, err := prefs.Load(a.deps.DataDir)
+	if err != nil {
+		status.State = string(updates.Unknown)
+		status.Problem = err.Error()
+		return status
+	}
+	if stored.SkipUpdateCheck {
+		status.State = UpdateOff
+		return status
+	}
+	status.Dismissed = stored.DismissedUpdate
+
+	result := a.releaseCheck(again)
+	status.State = string(result.State)
+	status.Latest = result.Latest
+	status.Problem = result.Problem
+	return status
+}
+
+func (a *App) releaseCheck(again bool) updates.Result {
+	a.updateMu.Lock()
+	defer a.updateMu.Unlock()
+	if a.update != nil && !again {
+		return *a.update
+	}
+	endpoint := a.updateEndpoint
+	if endpoint == "" {
+		endpoint = updates.Endpoint
+	}
+	result := updates.Check(a.ctx, updates.Client(updateTimeout), endpoint, a.version())
+	a.update = &result
+	return result
+}
+
+func (a *App) version() string {
+	if a.buildVersion != nil {
+		return a.buildVersion()
+	}
+	return payload.Version()
+}
+
+// OpenUpdatePage opens the page of the newer release the check found, in the
+// system's default browser — it is a download, not a chapter, so the chapter
+// browser has no say. The page is built from the tag (updates.ReleasePage),
+// never taken from the answer, and refused when the check found nothing newer.
+func (a *App) OpenUpdatePage() error {
+	a.updateMu.Lock()
+	found := a.update
+	a.updateMu.Unlock()
+	if found == nil || found.State != updates.Available {
+		return errors.New("no-update")
+	}
+	page, ok := updates.ReleasePage(found.Latest)
+	if !ok {
+		return errors.New("no-update")
+	}
+	runtime.BrowserOpenURL(a.ctx, page)
+	return nil
+}
+
+// DismissUpdate closes the notice for one release: it is not announced again,
+// and the next one is. Remembered between runs.
+func (a *App) DismissUpdate(version string) error {
+	if err := a.begin(); err != nil {
+		return err
+	}
+	if _, ok := updates.Parse(version); !ok {
+		return errors.New("bad-version")
+	}
+	return prefs.Update(a.deps.DataDir, func(p *prefs.Prefs) { p.DismissedUpdate = version })
+}
+
+// SetUpdateChecks turns the release check on or off. Off, the app asks GitHub
+// nothing at all. Update rather than Save, as everywhere: the file holds more
+// than this one setting.
+func (a *App) SetUpdateChecks(on bool) error {
+	if err := a.begin(); err != nil {
+		return err
+	}
+	return prefs.Update(a.deps.DataDir, func(p *prefs.Prefs) { p.SkipUpdateCheck = !on })
 }
 
 // OpenInBrowser opens the store listing in one specific browser — not the

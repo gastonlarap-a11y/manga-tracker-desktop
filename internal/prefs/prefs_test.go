@@ -25,6 +25,7 @@ func TestSaveThenLoad(t *testing.T) {
 	}{
 		{name: "a chosen browser", prefs: Prefs{BrowserID: "brave"}},
 		{name: "back to the system default", prefs: Prefs{}},
+		{name: "update checks off and a release dismissed", prefs: Prefs{SkipUpdateCheck: true, DismissedUpdate: "v0.1.20"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -121,6 +122,31 @@ func TestUpdateOnAMachineThatNeverChose(t *testing.T) {
 	}
 	if got.BrowserID != "brave" {
 		t.Errorf("BrowserID = %q, want it written", got.BrowserID)
+	}
+}
+
+// A file written before the update check existed holds only the browser. Read
+// now, it must keep the checks on — the default the window offers — and keep
+// the browser when a later setting is written through Update.
+func TestAFileFromBeforeUpdateChecksKeepsThemOn(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, fileName), []byte(`{"browserId":"brave"}`), 0o600); err != nil {
+		t.Fatalf("writing an older file: %v", err)
+	}
+
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.SkipUpdateCheck || got.DismissedUpdate != "" {
+		t.Errorf("Load = %+v, want update checks on and nothing dismissed", got)
+	}
+
+	if err := Update(dir, func(p *Prefs) { p.DismissedUpdate = "v0.1.20" }); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got, _ := Load(dir); got.BrowserID != "brave" {
+		t.Errorf("BrowserID = %q after Update, want brave kept", got.BrowserID)
 	}
 }
 

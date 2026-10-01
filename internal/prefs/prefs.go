@@ -33,6 +33,13 @@ type Prefs struct {
 	// internal/browsers. Empty means the system default: someone who never
 	// chose gets the behaviour they had before there was anything to choose.
 	BrowserID string `json:"browserId"`
+	// SkipUpdateCheck turns off asking GitHub for a newer release. A skip and
+	// not an "enabled": the zero value is a missing file, and someone who never
+	// chose gets the checks, as the window offers them by default.
+	SkipUpdateCheck bool `json:"skipUpdateCheck"`
+	// DismissedUpdate is the release whose notice was closed: that one is not
+	// announced again, and the next one is.
+	DismissedUpdate string `json:"dismissedUpdate"`
 }
 
 // Load reads the preferences stored in dir.

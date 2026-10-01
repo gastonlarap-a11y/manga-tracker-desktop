@@ -3,9 +3,13 @@
 import {main} from '../models';
 import {installer} from '../models';
 
+export function CheckForUpdate(arg1:boolean):Promise<main.UpdateStatus>;
+
 export function ClearSync():Promise<void>;
 
 export function DiagnoseSync():Promise<main.Diagnosis>;
+
+export function DismissUpdate(arg1:string):Promise<void>;
 
 export function Install():Promise<main.InstallOutcome>;
 
@@ -14,6 +18,8 @@ export function Look():Promise<installer.State>;
 export function OpenChapter(arg1:string):Promise<void>;
 
 export function OpenInBrowser(arg1:string):Promise<void>;
+
+export function OpenUpdatePage():Promise<void>;
 
 export function PublicAddress():Promise<string>;
 
@@ -26,6 +32,8 @@ export function SetChapterBrowser(arg1:string):Promise<void>;
 export function SetSync(arg1:string,arg2:string):Promise<main.SyncOutcome>;
 
 export function SetSyncFields(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.SyncOutcome>;
+
+export function SetUpdateChecks(arg1:boolean):Promise<void>;
 
 export function Settings():Promise<main.Settings>;
 

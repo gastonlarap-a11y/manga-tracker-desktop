@@ -13,14 +13,16 @@ import {
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
+  CheckForUpdate,
   Install,
   Look,
   OpenChapter,
   StartService,
 } from "../wailsjs/go/main/App";
-import type { installer } from "../wailsjs/go/models";
+import type { installer, main } from "../wailsjs/go/models";
 import { hello, readFrameMessage } from "./bridge";
 import { SettingsDialog } from "./Settings";
+import { UpdateNotice } from "./Updates";
 import "./App.css";
 
 /**
@@ -102,6 +104,20 @@ export function App({ translucent }: { translucent: boolean }) {
   const [bridge, setBridge] = useState<Bridge>("waiting");
   const frame = useRef<HTMLIFrameElement>(null);
   const readyTimer = useRef<number | undefined>(undefined);
+  const [update, setUpdate] = useState<main.UpdateStatus | null>(null);
+
+  // Whether a newer release is out, asked once per launch (and not at all
+  // when turned off). Read again when the settings close, where the check can
+  // be turned off or asked anew; the Go side remembers the answer, so that
+  // costs no request.
+  const readUpdate = useCallback(() => {
+    CheckForUpdate(false)
+      .then(setUpdate)
+      // No answer from the binding means no notice: this corner only ever
+      // announces something found, and the settings screen says the rest.
+      .catch(() => setUpdate(null));
+  }, []);
+  useEffect(readUpdate, [readUpdate]);
 
   // Chapter links inside the dashboard are cross-origin `target="_blank"`
   // anchors, and Wails implements no handler for a new-window request: the
@@ -265,6 +281,14 @@ export function App({ translucent }: { translucent: boolean }) {
           onSettings={openSettings}
         />
       )}
+      <UpdateNotice
+        status={update}
+        onDismissed={(version) =>
+          setUpdate((current) =>
+            current === null ? current : { ...current, dismissed: version },
+          )
+        }
+      />
       {settingsOpen && (
         <SettingsDialog
           onClose={() => {
@@ -272,6 +296,7 @@ export function App({ translucent }: { translucent: boolean }) {
             // Installing the extension or turning sync on changes what the
             // dashboard shows, so the window checks again on close.
             refresh();
+            readUpdate();
           }}
         />
       )}
