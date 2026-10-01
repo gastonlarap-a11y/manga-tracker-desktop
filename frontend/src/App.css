@@ -1,94 +1,226 @@
 .app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
 }
 
-/* Deliberately slim: the dashboard is the content, this only says where the
-   window is pointing and gives a way back when the backend restarts. */
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 14px;
-  background: #171a21;
-  border-bottom: 1px solid #262b36;
+/* The dashboard is the whole window: its bar is the only bar. Transparent so
+   that, on macOS, the window's material shows wherever the dashboard lets it
+   — which needs both documents to declare the same color-scheme, or Chromium
+   paints an opaque backdrop behind the frame. */
+.dashboard {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: transparent;
+}
+
+/* Only for a dashboard older than the settings button in its own bar. */
+.floating-gear {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--glass-line);
+  border-radius: 50%;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-hi), var(--shadow-lg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.floating-gear svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ---- status screens ---- */
+
+.screen {
+  position: relative;
+  display: grid;
+  flex: 1;
+  place-items: center;
+  overflow: auto;
+  padding: 40px 24px;
   -webkit-user-select: none;
   user-select: none;
 }
 
-.title {
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-
-.where {
-  flex: 1;
-  color: #7b8496;
-  font-size: 0.82rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.action {
-  background: #232936;
-  color: inherit;
-  border: 1px solid #333b4a;
-  border-radius: 6px;
-  padding: 5px 12px;
-  font: inherit;
-  font-size: 0.85rem;
+.screen-gear {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--glass-line);
+  border-radius: 50%;
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  color: var(--text-2);
   cursor: pointer;
 }
 
-.action:hover {
-  background: #2c3444;
+.screen-gear:hover {
+  color: var(--text);
 }
 
-/* One primary action per screen: the button that does the thing you came for. */
-.primary {
-  background: #4f46e5;
-  border-color: #5b52e8;
-  padding: 8px 18px;
-  font-size: 0.95rem;
-  margin-top: 4px;
+.screen-gear svg {
+  width: 18px;
+  height: 18px;
 }
 
-.primary:hover {
-  background: #5b52e8;
+/* A card of glass over the window: over macOS's material it is the system's
+   own look; over Windows' flat background it reads as a raised sheet. */
+.status-card {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(35rem, 100%);
+  padding: 30px 32px 28px;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-xl);
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-hi), var(--shadow-lg);
+  text-align: center;
+  animation: card-in 0.4s var(--ease-out) both;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    translate: 0 10px;
+    scale: 0.98;
+  }
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-2);
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, oklch(0.74 0.16 300), oklch(0.6 0.2 262));
+  color: oklch(0.99 0 0);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.35);
+}
+
+.brand-mark svg {
+  width: 15px;
+  height: 15px;
+}
+
+.status-icon {
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  margin-top: 6px;
+  border-radius: 20px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.status-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.tone-busy {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tone-busy svg {
+  animation: spin 1s linear infinite;
+}
+
+.tone-warn {
+  background: var(--warm-soft);
+  color: var(--warm);
+}
+
+.tone-bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.tone-good {
+  background: var(--good-soft);
+  color: var(--good);
+}
+
+@keyframes spin {
+  to {
+    rotate: 1turn;
+  }
+}
+
+.status-card h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.32rem;
+  font-weight: 720;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.detail {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  text-wrap: pretty;
 }
 
 /* An error from the service, shown verbatim: it is the only text that says
    what actually failed, and paraphrasing it would lose the detail. */
 .reason {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bad-soft);
+  color: var(--bad);
+  font-family: var(--font-mono);
   font-size: 0.8rem;
-  color: #d98b8b;
   text-align: left;
   white-space: pre-wrap;
   word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
-.body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
+.status-card .row {
+  justify-content: center;
+  margin-top: 4px;
 }
 
-.message {
-  margin: auto;
-  max-width: 34rem;
-  padding: 0 2rem;
-  text-align: center;
-  color: #aeb6c6;
-  line-height: 1.55;
-}
-
-.detail {
-  color: #7b8496;
-  font-size: 0.88rem;
-}
-
-.dashboard {
-  flex: 1;
-  border: 0;
+@media (prefers-reduced-motion: reduce) {
+  .status-card,
+  .tone-busy svg {
+    animation: none;
+  }
 }

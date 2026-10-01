@@ -1,18 +1,34 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  BookOpen,
+  CirclePause,
+  CircleQuestionMark,
+  CircleX,
+  Download,
+  Info,
+  LoaderCircle,
+  type LucideIcon,
+  Settings,
+  TriangleAlert,
+  Wrench,
+} from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   Install,
   Look,
   OpenChapter,
   StartService,
 } from "../wailsjs/go/main/App";
+import type { installer } from "../wailsjs/go/models";
+import { hello, readFrameMessage } from "./bridge";
 import { SettingsDialog } from "./Settings";
 import "./App.css";
 
-// The two halves of the link bridge, matching src/lib/embed.ts in
-// manga-tracker-dashboard. The dashboard installs nothing until it is greeted,
-// so an embedder that never says hello gets the plain browser behaviour.
-const EMBED_HELLO = "manga-tracker:embed-hello";
-const OPEN_EXTERNAL = "manga-tracker:open-external";
+/**
+ * How long the dashboard has to answer the greeting before this window stops
+ * counting on it for the settings button. Generous: the greeting goes out when
+ * the frame has loaded, so all that is left is one round of messages.
+ */
+const READY_TIMEOUT_MS = 3000;
 
 /**
  * What the window is showing. A union rather than a pile of booleans:
@@ -39,6 +55,13 @@ type View =
   // would not start used to be reported as an installation that did not finish.
   | { kind: "failed"; action: "install" | "start"; reason: string };
 
+/**
+ * Whether the dashboard in the frame has said it carries the settings button.
+ * Until it does, the window cannot assume it — "silent" is a dashboard older
+ * than the bridge, and gets a button from this window instead.
+ */
+type Bridge = "waiting" | "ready" | "silent";
+
 const FAILURES: Record<"install" | "start", string> = {
   install: "No se pudo completar la instalación.",
   start: "No se pudo arrancar el servicio.",
@@ -55,46 +78,77 @@ const REFUSALS: Record<string, string> = {
     "Esta computadora ya tiene Manga Tracker instalado, aunque ahora esté detenido. No sobrescribo una instalación existente.",
 };
 
-export function App() {
+function viewOf(state: installer.State): View {
+  switch (state.kind) {
+    case "running":
+      return { kind: "connected", baseUrl: state.baseUrl };
+    case "installable":
+    case "stopped":
+    case "noPayload":
+      return { kind: state.kind };
+    case "setupFailed":
+      return { kind: "setupFailed", detail: state.detail };
+    default:
+      // "unknown", or a kind this window does not know yet. Either way it
+      // cannot say what is installed — and must not guess "development
+      // build", which is what the old fallthrough did.
+      return { kind: "unknown" };
+  }
+}
+
+export function App({ translucent }: { translucent: boolean }) {
   const [view, setView] = useState<View>({ kind: "looking" });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bridge, setBridge] = useState<Bridge>("waiting");
   const frame = useRef<HTMLIFrameElement>(null);
+  const readyTimer = useRef<number | undefined>(undefined);
 
   // Chapter links inside the dashboard are cross-origin `target="_blank"`
   // anchors, and Wails implements no handler for a new-window request: the
-  // click did nothing at all. The dashboard forwards them here instead.
-  const embedOrigin = view.kind === "connected" ? new URL(view.baseUrl).origin : null;
+  // click did nothing at all. The dashboard forwards them here instead, and
+  // asks for the settings the same way.
+  const embedOrigin =
+    view.kind === "connected" ? new URL(view.baseUrl).origin : null;
   useEffect(() => {
     if (embedOrigin === null) {
       return;
     }
     const onMessage = (event: MessageEvent) => {
-      // Only the frame we are showing gets to ask this window to open things.
+      // Only the frame we are showing gets to ask this window for anything.
       if (event.origin !== embedOrigin) {
         return;
       }
-      const data: unknown = event.data;
-      if (
-        typeof data !== "object" ||
-        data === null ||
-        (data as { type?: unknown }).type !== OPEN_EXTERNAL
-      ) {
+      const message = readFrameMessage(event.data);
+      if (message === null) {
         return;
       }
-      const url = (data as { url?: unknown }).url;
-      if (typeof url !== "string") {
-        return;
+      switch (message.kind) {
+        case "openExternal":
+          // The scheme is validated on the Go side, in one place. Its only
+          // refusal is a link that is not http(s), which is refused on
+          // purpose and has nowhere on screen to be explained: the click came
+          // from inside the frame.
+          void OpenChapter(message.url).catch((reason: unknown) =>
+            console.warn(
+              "[manga-tracker] chapter link not opened",
+              message.url,
+              reason,
+            ),
+          );
+          return;
+        case "ready":
+          setBridge(message.features.includes("settings") ? "ready" : "silent");
+          return;
+        case "openSettings":
+          setSettingsOpen(true);
+          return;
       }
-      // The scheme is validated on the Go side, in one place. Its only refusal
-      // is a link that is not http(s), which is refused on purpose and has
-      // nowhere on screen to be explained: the click came from inside the frame.
-      void OpenChapter(url).catch((reason: unknown) =>
-        console.warn("[manga-tracker] chapter link not opened", url, reason),
-      );
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [embedOrigin]);
+
+  useEffect(() => () => window.clearTimeout(readyTimer.current), []);
 
   const look = useCallback(() => {
     setView({ kind: "looking" });
@@ -102,25 +156,27 @@ export function App() {
     // "Buscando…" forever. A rejection says nothing about what is installed,
     // so it lands on "unknown" rather than on any screen that claims to know.
     void Look()
+      .then((state) => setView(viewOf(state)))
+      .catch(() => setView({ kind: "unknown" }));
+  }, []);
+
+  /**
+   * Looks again without tearing the window down first. Closing the settings
+   * used to go through "Buscando…", which unmounted the frame and reloaded the
+   * whole dashboard to land on the same page; now the frame stays unless the
+   * answer is actually different.
+   */
+  const refresh = useCallback(() => {
+    void Look()
       .then((state) => {
-        switch (state.kind) {
-          case "running":
-            setView({ kind: "connected", baseUrl: state.baseUrl });
-            return;
-          case "installable":
-          case "stopped":
-          case "noPayload":
-            setView({ kind: state.kind });
-            return;
-          case "setupFailed":
-            setView({ kind: "setupFailed", detail: state.detail });
-            return;
-          default:
-            // "unknown", or a kind this window does not know yet. Either way
-            // it cannot say what is installed — and must not guess
-            // "development build", which is what the old fallthrough did.
-            setView({ kind: "unknown" });
-        }
+        const next = viewOf(state);
+        setView((current) =>
+          current.kind === "connected" &&
+          next.kind === "connected" &&
+          current.baseUrl === next.baseUrl
+            ? current
+            : next,
+        );
       })
       .catch(() => setView({ kind: "unknown" }));
   }, []);
@@ -154,171 +210,273 @@ export function App() {
       );
   }, []);
 
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+
   return (
     <div className="app">
-      <header className="bar">
-        <span className="title">Manga Tracker</span>
-        <span className="where">
-          {view.kind === "connected" ? view.baseUrl : "sin conexión"}
-        </span>
-        {/* "Buscar de nuevo" y no "Reconectar": esto vuelve a sondear el
-            backend de esta computadora, que contesta perfectamente bien
-            mientras su conexión a la base de datos está caída. Quien tenía la
-            sincronización rota lo apretaba esperando que reintentara la
-            conexión, y no pasaba nada porque no es lo que hace. Reintentar la
-            base está en Configuración, al lado del estado que lo dice. */}
-        <button type="button" className="action" onClick={look}>
-          Buscar de nuevo
-        </button>
-        <button
-          type="button"
-          className="gear"
-          onClick={() => setSettingsOpen(true)}
-          aria-label="Configuración"
-          title="Configuración"
-        >
-          ⚙
-        </button>
-      </header>
-      {settingsOpen && (
-        <SettingsDialog
-          onClose={() => {
-            setSettingsOpen(false);
-            // Installing the extension or turning sync on changes what the
-            // dashboard shows, so the window catches up on close.
-            look();
-          }}
-        />
-      )}
-      <main className="body">
-        {view.kind === "looking" && (
-          <p className="message">Buscando Manga Tracker en tu computadora…</p>
-        )}
-
-        {view.kind === "installable" && (
-          <div className="message">
-            <p>Todavía no está instalado en esta computadora.</p>
-            <p className="detail">
-              Se instala en un momento y queda funcionando solo: arranca cada vez
-              que inicies sesión, sin que tengas que abrir esta ventana.
-            </p>
-            <button type="button" className="action primary" onClick={install}>
-              Instalar Manga Tracker
-            </button>
-          </div>
-        )}
-
-        {view.kind === "installing" && (
-          <p className="message">Instalando y arrancando el servicio…</p>
-        )}
-
-        {view.kind === "stopped" && (
-          <div className="message">
-            <p>Manga Tracker está instalado, pero ahora mismo no responde.</p>
-            <p className="detail">
-              Puede estar reiniciándose después de una actualización. Si acabás
-              de actualizar, esperá unos segundos y buscá de nuevo. Si no,
-              arrancalo desde acá: tu biblioteca y tu configuración quedan como
-              están.
-            </p>
-            <div className="row">
-              <button type="button" className="action primary" onClick={start}>
-                Arrancar el servicio
-              </button>
-              <button type="button" className="action" onClick={look}>
-                Buscar de nuevo
-              </button>
-            </div>
-          </div>
-        )}
-
-        {view.kind === "starting" && (
-          <p className="message">Arrancando el servicio…</p>
-        )}
-
-        {view.kind === "unknown" && (
-          <div className="message">
-            <p>No pude averiguar si Manga Tracker está instalado.</p>
-            <p className="detail">
-              No respondió nada, y tampoco pude preguntarle al servicio. No te
-              ofrezco instalarlo porque no sé qué hay en esta computadora, y
-              reinstalar encima de una instalación que funciona borraría su
-              configuración.
-            </p>
-            <button type="button" className="action" onClick={look}>
-              Buscar de nuevo
-            </button>
-          </div>
-        )}
-
-        {view.kind === "noPayload" && (
-          <div className="message">
-            <p>Esta versión no trae el servidor incluido.</p>
-            <p className="detail">
-              Es una compilación de desarrollo. Para verla funcionar, arrancá el
-              backend por tu cuenta, o usá el instalador publicado.
-            </p>
-            <button type="button" className="action" onClick={look}>
-              Buscar de nuevo
-            </button>
-          </div>
-        )}
-
-        {view.kind === "setupFailed" && (
-          <div className="message">
-            <p>No pude preparar el servidor de Manga Tracker en esta computadora.</p>
-            <p className="detail">
-              Tu biblioteca no se tocó: vive fuera de la carpeta que se estaba
-              escribiendo. Suele ser falta de espacio en el disco, o un permiso
-              sobre la carpeta de datos. Buscar de nuevo lo vuelve a intentar.
-            </p>
-            <p className="detail reason">{view.detail}</p>
-            <button type="button" className="action" onClick={look}>
-              Buscar de nuevo
-            </button>
-          </div>
-        )}
-
-        {view.kind === "refused" && (
-          <div className="message">
-            <p>{view.message}</p>
-            <button type="button" className="action" onClick={look}>
-              Buscar de nuevo
-            </button>
-          </div>
-        )}
-
-        {view.kind === "failed" && (
-          <div className="message">
-            <p>{FAILURES[view.action]}</p>
-            <p className="detail reason">{view.reason}</p>
-            <button type="button" className="action" onClick={look}>
-              Reintentar
-            </button>
-          </div>
-        )}
-
-        {view.kind === "connected" && (
-          // The dashboard is served by the backend, so inside this frame it is
-          // same-origin with its own API — no CORS involved, and no copy of the
-          // dashboard shipped in this app that could fall out of date.
+      {view.kind === "connected" ? (
+        <>
+          {/* The dashboard is served by the backend, so inside this frame it
+              is same-origin with its own API — no CORS involved, and no copy
+              of the dashboard shipped in this app that could fall out of
+              date. It is the whole window: its bar is the only one. */}
           <iframe
             ref={frame}
             className="dashboard"
             src={view.baseUrl}
             title="Manga Tracker"
             onLoad={() => {
-              // The greeting that turns the dashboard's link bridge on. Here
-              // the target origin is exact and known, unlike the reply: this
-              // window is `wails://wails/`, which is not a usable targetOrigin.
+              // Here the target origin is exact and known, unlike the reply:
+              // this window is `wails://wails/`, which is not a usable
+              // targetOrigin.
               frame.current?.contentWindow?.postMessage(
-                { type: EMBED_HELLO },
+                hello(translucent),
                 new URL(view.baseUrl).origin,
+              );
+              setBridge((current) => (current === "ready" ? current : "waiting"));
+              window.clearTimeout(readyTimer.current);
+              readyTimer.current = window.setTimeout(
+                () =>
+                  setBridge((current) =>
+                    current === "waiting" ? "silent" : current,
+                  ),
+                READY_TIMEOUT_MS,
               );
             }}
           />
-        )}
-      </main>
+          {bridge === "silent" && (
+            <button
+              type="button"
+              className="floating-gear"
+              onClick={openSettings}
+              aria-label="Configuración"
+              title="Configuración"
+            >
+              <Settings aria-hidden="true" />
+            </button>
+          )}
+        </>
+      ) : (
+        <StatusScreen
+          view={view}
+          onLook={look}
+          onInstall={install}
+          onStart={start}
+          onSettings={openSettings}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => {
+            setSettingsOpen(false);
+            // Installing the extension or turning sync on changes what the
+            // dashboard shows, so the window checks again on close.
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
+}
+
+type Tone = "neutral" | "busy" | "good" | "warn" | "bad";
+
+interface Screen {
+  readonly Icon: LucideIcon;
+  readonly tone: Tone;
+  readonly title: string;
+  readonly body?: ReactNode;
+  readonly reason?: string;
+  readonly actions?: ReactNode;
+}
+
+function StatusScreen({
+  view,
+  onLook,
+  onInstall,
+  onStart,
+  onSettings,
+}: {
+  view: Exclude<View, { kind: "connected" }>;
+  onLook: () => void;
+  onInstall: () => void;
+  onStart: () => void;
+  onSettings: () => void;
+}) {
+  const lookAgain = (
+    <button type="button" className="action" onClick={onLook}>
+      Buscar de nuevo
+    </button>
+  );
+  const screen = screenFor(view, { lookAgain, onLook, onInstall, onStart });
+  const { Icon } = screen;
+
+  return (
+    <main className="screen">
+      <button
+        type="button"
+        className="screen-gear"
+        onClick={onSettings}
+        aria-label="Configuración"
+        title="Configuración"
+      >
+        <Settings aria-hidden="true" />
+      </button>
+      <section className="status-card" aria-live="polite">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            <BookOpen />
+          </span>
+          Manga Tracker
+        </div>
+        <span className={`status-icon tone-${screen.tone}`} aria-hidden="true">
+          <Icon />
+        </span>
+        <h1>{screen.title}</h1>
+        {screen.body}
+        {screen.reason && <p className="detail reason">{screen.reason}</p>}
+        {screen.actions && <div className="row">{screen.actions}</div>}
+      </section>
+    </main>
+  );
+}
+
+function screenFor(
+  view: Exclude<View, { kind: "connected" }>,
+  handlers: {
+    lookAgain: ReactNode;
+    onLook: () => void;
+    onInstall: () => void;
+    onStart: () => void;
+  },
+): Screen {
+  switch (view.kind) {
+    case "looking":
+      return {
+        Icon: LoaderCircle,
+        tone: "busy",
+        title: "Buscando Manga Tracker en tu computadora…",
+      };
+    case "installable":
+      return {
+        Icon: Download,
+        tone: "neutral",
+        title: "Todavía no está instalado en esta computadora.",
+        body: (
+          <p className="detail">
+            Se instala en un momento y queda funcionando solo: arranca cada vez
+            que inicies sesión, sin que tengas que abrir esta ventana.
+          </p>
+        ),
+        actions: (
+          <button
+            type="button"
+            className="action primary"
+            onClick={handlers.onInstall}
+          >
+            Instalar Manga Tracker
+          </button>
+        ),
+      };
+    case "installing":
+      return {
+        Icon: LoaderCircle,
+        tone: "busy",
+        title: "Instalando y arrancando el servicio…",
+      };
+    case "stopped":
+      return {
+        Icon: CirclePause,
+        tone: "warn",
+        title: "Manga Tracker está instalado, pero ahora mismo no responde.",
+        body: (
+          <p className="detail">
+            Puede estar reiniciándose después de una actualización. Si acabás de
+            actualizar, esperá unos segundos y buscá de nuevo. Si no, arrancalo
+            desde acá: tu biblioteca y tu configuración quedan como están.
+          </p>
+        ),
+        actions: (
+          <>
+            <button
+              type="button"
+              className="action primary"
+              onClick={handlers.onStart}
+            >
+              Arrancar el servicio
+            </button>
+            {handlers.lookAgain}
+          </>
+        ),
+      };
+    case "starting":
+      return {
+        Icon: LoaderCircle,
+        tone: "busy",
+        title: "Arrancando el servicio…",
+      };
+    case "unknown":
+      return {
+        Icon: CircleQuestionMark,
+        tone: "warn",
+        title: "No pude averiguar si Manga Tracker está instalado.",
+        body: (
+          <p className="detail">
+            No respondió nada, y tampoco pude preguntarle al servicio. No te
+            ofrezco instalarlo porque no sé qué hay en esta computadora, y
+            reinstalar encima de una instalación que funciona borraría su
+            configuración.
+          </p>
+        ),
+        actions: handlers.lookAgain,
+      };
+    case "noPayload":
+      return {
+        Icon: Wrench,
+        tone: "neutral",
+        title: "Esta versión no trae el servidor incluido.",
+        body: (
+          <p className="detail">
+            Es una compilación de desarrollo. Para verla funcionar, arrancá el
+            backend por tu cuenta, o usá el instalador publicado.
+          </p>
+        ),
+        actions: handlers.lookAgain,
+      };
+    case "setupFailed":
+      return {
+        Icon: TriangleAlert,
+        tone: "bad",
+        title:
+          "No pude preparar el servidor de Manga Tracker en esta computadora.",
+        body: (
+          <p className="detail">
+            Tu biblioteca no se tocó: vive fuera de la carpeta que se estaba
+            escribiendo. Suele ser falta de espacio en el disco, o un permiso
+            sobre la carpeta de datos. Buscar de nuevo lo vuelve a intentar.
+          </p>
+        ),
+        reason: view.detail,
+        actions: handlers.lookAgain,
+      };
+    case "refused":
+      return {
+        Icon: Info,
+        tone: "neutral",
+        title: view.message,
+        actions: handlers.lookAgain,
+      };
+    case "failed":
+      return {
+        Icon: CircleX,
+        tone: "bad",
+        title: FAILURES[view.action],
+        reason: view.reason,
+        actions: (
+          <button type="button" className="action" onClick={handlers.onLook}>
+            Reintentar
+          </button>
+        ),
+      };
+  }
 }

@@ -1,164 +1,249 @@
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(4, 5, 8, 0.6);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 5vh 1.5rem;
-  overflow-y: auto;
-  z-index: 10;
-}
+/* The settings: a native <dialog>, drawn as a sheet of glass over whatever the
+   window is showing. The dialog element itself is a transparent full-window
+   layer, so a click on it is a click on the backdrop. */
 
 .dialog {
-  width: min(40rem, 100%);
-  background: #171a21;
-  border: 1px solid #262b36;
-  border-radius: 14px;
-  padding: 1.4rem 1.5rem 1.7rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.6rem;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 5vh 1.5rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+/* Only while open: a display set unconditionally would override the
+   browser's own "hidden while closed". */
+.dialog[open] {
+  display: grid;
+  align-items: start;
+  justify-items: center;
+  overflow-y: auto;
+}
+
+.dialog::backdrop {
+  background: oklch(0.12 0.01 270 / 0.42);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.sheet {
+  display: grid;
+  gap: 14px;
+  width: min(44rem, 100%);
+  padding: 18px 20px 22px;
+  border: 1px solid var(--glass-line);
+  border-radius: var(--radius-xl);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-hi), var(--shadow-lg);
+  animation: sheet-in 0.3s var(--ease-out) both;
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+    scale: 0.985;
+  }
 }
 
 .dialog-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 0 2px;
 }
 
 .dialog h2 {
   margin: 0;
-  font-size: 1.15rem;
-  font-weight: 620;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 740;
+  letter-spacing: -0.015em;
 }
 
-.dialog h3 {
-  margin: 0 0 0.5rem;
-  font-size: 0.78rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: #8891a5;
+/* Each part of the settings is a card: content, so solid, not glass. */
+.card {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
 }
 
-.dialog section {
+.card h3 {
   display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 680;
 }
 
-/* Reused from App.css for prose; here it is left-aligned because these are
-   explanations beside controls, not a centred empty state. */
+.card h3 svg {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+/* Explanations beside controls, left-aligned, unlike a centred screen. */
 .dialog .detail {
-  margin: 0;
   text-align: left;
-  color: #aeb6c6;
   font-size: 0.88rem;
-  line-height: 1.5;
 }
 
 .dialog .bad {
-  color: #e0918f;
+  color: var(--bad);
 }
 
 .dialog .good {
-  color: #7fd1a3;
+  color: var(--good);
 }
 
-.choice {
+/* The one-line answer to "is sync working?", led by a dot in its colour. */
+.status-line {
   display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  font-size: 0.92rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-weight: 600;
+}
+
+.status-line::before {
+  content: "";
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 20%, transparent);
+}
+
+.status-line .reason {
+  flex-basis: 100%;
+  font-weight: 400;
+}
+
+/* Where the library lives: two cards to pick from, not two bare radios. */
+.choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .choice label {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-size: 0.9rem;
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast),
+    background-color var(--dur-fast);
+}
+
+.choice label:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.choice label:has(input:disabled) {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.choice input {
+  accent-color: var(--accent);
 }
 
 .fields {
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-  padding: 0.9rem;
-  border: 1px solid #262b36;
-  border-radius: 10px;
-  background: #12151b;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
 }
 
 .field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
+  display: grid;
+  gap: 5px;
 }
 
 .field span {
-  font-size: 0.78rem;
-  color: #8891a5;
+  color: var(--text-3);
+  font-size: 0.76rem;
+  font-weight: 600;
 }
 
-.field input {
-  background: #0f1115;
-  border: 1px solid #333b4a;
-  border-radius: 6px;
-  padding: 7px 10px;
-  color: inherit;
+.field input,
+.card select.action {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
   font: inherit;
   font-size: 0.88rem;
 }
 
 .field input:focus-visible,
-.action:focus-visible,
-.link:focus-visible {
-  outline: 2px solid #7c74f0;
-  outline-offset: 2px;
+.card select.action:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
+.card select.action {
+  justify-self: start;
+  max-width: 100%;
+  border-radius: var(--radius-pill);
 }
 
-.link {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: #8ea8ff;
-  font: inherit;
-  font-size: 0.86rem;
-  cursor: pointer;
-  text-align: left;
-}
-
-.link:hover {
-  text-decoration: underline;
-}
-
-/* Which way the connection is being typed. Underlined rather than boxed: it is
-   a choice between two forms of the same thing, not two different actions. */
+/* Which way the connection is being typed: two forms of the same thing, so a
+   small segmented choice rather than two buttons. */
 .tabs {
-  gap: 1rem;
-  margin-bottom: 0.2rem;
+  gap: 4px;
+  width: fit-content;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+}
+
+.tabs .link {
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+}
+
+.tabs .link:hover {
+  text-decoration: none;
+  color: var(--text);
 }
 
 .tabs .chosen {
-  color: #e8e8ea;
-  text-decoration: underline;
-  text-underline-offset: 0.25rem;
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
 }
 
 .steps {
-  margin: 0.2rem 0 0;
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 0;
   padding-left: 1.2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-  color: #aeb6c6;
+  color: var(--text-2);
   font-size: 0.88rem;
   line-height: 1.5;
 }
@@ -166,12 +251,10 @@
 .steps code,
 .status code {
   display: inline-block;
-  background: #0f1115;
-  border: 1px solid #262b36;
-  border-radius: 5px;
-  padding: 1px 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8rem;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
   word-break: break-all;
 }
 
@@ -181,34 +264,22 @@
 
 .status {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.4rem 1rem;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
   margin: 0;
   font-size: 0.88rem;
 }
 
 .status dt {
-  color: #8891a5;
+  color: var(--text-3);
 }
 
 .status dd {
   margin: 0;
 }
 
-/* The gear sits in the top bar; kept quiet so it does not compete with the
-   dashboard behind it. */
-.gear {
-  background: none;
-  border: 0;
-  color: #8891a5;
-  font-size: 1rem;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 6px;
-  line-height: 1;
-}
-
-.gear:hover {
-  color: #e6e9ef;
-  background: #232936;
+@media (prefers-reduced-motion: reduce) {
+  .sheet {
+    animation: none;
+  }
 }

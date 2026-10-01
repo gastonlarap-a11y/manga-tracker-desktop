@@ -49,7 +49,11 @@ working. It is a control panel, not a runtime.
   and extracted on first launch. `dist/` holds only `VERSION` in git: a development build
   carries nothing, `Available()` says so, and `wails dev` keeps working
 - `frontend/` — React 19 + Vite 8 + TypeScript 7 (same stack as the dashboard), built with
-  **Bun**; `wails.json` points `frontend:install`/`frontend:build` at it
+  **Bun**; `wails.json` points `frontend:install`/`frontend:build` at it. The window's own
+  pages (status screens, settings) share the dashboard's design tokens (`src/style.css`):
+  same colour names, dark by default and light when the system is. `src/bridge.ts` is this
+  side of the frame protocol; `src/theme.ts` keeps the Windows window background on the
+  system theme
 - `frontend/wailsjs/` — generated bindings (`wails build`/`wails dev` regenerate them)
 - `internal/browsers/` — which Chromium browsers are installed, and opening **one specific
   one**: someone whose default is Safari still wants the extension in Brave
@@ -119,6 +123,22 @@ working. It is a control panel, not a runtime.
   `target="_blank"` inside that frame did nothing at all; the dashboard cancels the click and
   posts the URL up instead. And the browser has to be *chosen*: opening the system default
   can mean opening where the extension is not, and a chapter read there records nothing.
+- **While the dashboard is showing, the window has no bar of its own.** The two stacked bars
+  (this one with the backend's URL, the dashboard's repeating the name) became one: the
+  dashboard's, which carries a settings button only when greeted, and asks for them with
+  `manga-tracker:open-settings` (`src/bridge.ts`, origin-checked like the links). The button
+  is the dashboard's to have, so this window waits for it to say so — `embed-ready` with
+  `settings` — and when that answer does not come within 3 s (a dashboard older than it, a
+  backend run from a checkout) shows a floating gear itself. The settings must be reachable
+  whatever is in the frame. Closing them re-checks without unmounting the frame: it used to
+  pass through "Buscando…", which reloaded the whole dashboard to land on the same page.
+- **Vibrancy on macOS only.** `mac.Options{WindowIsTranslucent, WebviewIsTransparent}` and a
+  transparent `BackgroundColour` (`windowBackground` in `main.go`) put the system's material
+  behind the page; the status screens are transparent from the first frame (`data-window`,
+  set in `main.tsx` from the user agent, the only thing known that early), and the dashboard
+  stops painting its background once the greeting says `translucent`. Windows stays opaque,
+  its background following the theme through `WindowSetBackgroundColour`: Mica needs Windows
+  11 22621+, and WebView2 transparency has never been looked at on a real machine.
 - **`go:embed` does not keep permissions.** Everything comes back read-only, so the extracted
   Bun is chmod'ed explicitly — without it the install fails with "permission denied" on a file
   that is plainly there.

@@ -2,14 +2,32 @@ package main
 
 import (
 	"embed"
+	"runtime"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// windowBackground is what shows behind the page while it loads and while the
+// window is resized.
+//
+// On macOS it is fully transparent, so what shows is the window's own material
+// (vibrancy, below) — which follows the system's light or dark appearance by
+// itself. Elsewhere it is the dashboard's dark background, opaque: Windows
+// treats any alpha but 0 as 255, and its window gets no material (Mica was left
+// out until it can be checked on a real machine). The frontend moves it to the
+// light colour when the system is light (frontend/src/theme.ts).
+func windowBackground(goos string) *options.RGBA {
+	if goos == "darwin" {
+		return &options.RGBA{R: 0, G: 0, B: 0, A: 0}
+	}
+	return &options.RGBA{R: 17, G: 18, B: 24, A: 255}
+}
 
 func main() {
 	app := NewApp()
@@ -25,10 +43,15 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		// Matches the dashboard's own background, so resizing does not flash a
-		// different colour behind the frame it is shown in.
-		BackgroundColour: &options.RGBA{R: 15, G: 17, B: 21, A: 1},
-		OnStartup:        app.startup,
+		BackgroundColour: windowBackground(runtime.GOOS),
+		// The page is transparent where it wants the window's material to show:
+		// the status screens always, the dashboard once it has been told the
+		// window is translucent (the embed greeting, frontend/src/App.tsx).
+		Mac: &mac.Options{
+			WebviewIsTransparent: true,
+			WindowIsTranslucent:  true,
+		},
+		OnStartup: app.startup,
 		Bind: []interface{}{
 			app,
 		},
