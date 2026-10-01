@@ -24,6 +24,7 @@ import {
   type Saving,
   sinceLabel,
 } from "./syncOutcome";
+import { UpdatesSection } from "./Updates";
 
 /**
  * Every sentence the user reads lives here, in one language. The Go side
@@ -854,6 +855,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 </p>
               )}
             </section>
+
+            <UpdatesSection />
           </>
         )}
       </div>

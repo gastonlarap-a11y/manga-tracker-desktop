@@ -189,6 +189,26 @@ export namespace main {
 	        this.reach = source["reach"];
 	    }
 	}
+	export class UpdateStatus {
+	    state: string;
+	    current: string;
+	    latest: string;
+	    dismissed: string;
+	    problem: string;
+
+	    static createFrom(source: any = {}) {
+	        return new UpdateStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.current = source["current"];
+	        this.latest = source["latest"];
+	        this.dismissed = source["dismissed"];
+	        this.problem = source["problem"];
+	    }
+	}
 
 }
 

@@ -74,6 +74,11 @@ working. It is a control panel, not a runtime.
   made every Atlas cluster `unknown`, and the keystore fallback never ran. Its network
   dependencies are parameters (`reach.Network`), so the tests touch neither a resolver nor a
   socket
+- `internal/updates/` — whether a newer release is published: one question to GitHub's
+  releases API (`/releases/latest`), the tag compared as numbers with `payload.Version()`.
+  `current`, `available`, `unknown` and `development` (a build with no release tag, which asks
+  nothing). The window's notice and the settings section are `frontend/src/Updates.tsx`, their
+  wording `frontend/src/updateStatus.ts`
 - `internal/publicip/` — the address this machine appears to come from, which is the only way
   to learn what an allowlist has to contain. **IPv4 pinned**: on a dual-stack machine an
   unpinned request answers with the IPv6 address, and a firewall rule written from that allows
@@ -245,6 +250,14 @@ working. It is a control panel, not a runtime.
   stopped for an update as "stopped". `begin` waits for startup, and refuses when there is no
   data directory — `deps` are never wired then. A failed `Prepare` is `KindSetupFailed`, never
   `KindNoPayload`: that one says "development build", which for a release is untrue.
+- **The update check is the one request the app makes on its own, and it is the user's to
+  turn off.** Once per launch, remembered in memory (GitHub allows 60 anonymous requests an
+  hour per address), and nothing at all while "Buscar versiones nuevas" is off — nor while the
+  preferences cannot be read, since then whether it is allowed is not known either. Its
+  answer is a state like every other: `unknown` (no network, rate limited, an answer that is
+  not a release) never reads as "estás al día". The page it opens is built from the tag
+  (`updates.ReleasePage`), never taken from the answer. It announces; updating stays a
+  person's act, because the installer already moves the backend when the new app first runs.
 - **A credential never goes into a command line.** `CallWithSecret` puts it on the service
   control's stdin; `Call` is for everything else. An argument is readable by every process on
   the machine (`ps`, Task Manager) for as long as the command runs, which is the rule
