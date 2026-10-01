@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { Cloud, Globe, Info, Puzzle, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ClearSync,
   DiagnoseSync,
@@ -78,6 +79,21 @@ const EMPTY_FIELDS: Entry = {
 };
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  // A native modal: the browser traps focus inside it, turns Escape into a
+  // `cancel` and draws the backdrop. Guarded because StrictMode runs this
+  // twice, and a second showModal() on an open dialog throws.
+  //
+  // It is never closed by the browser, only unmounted by the parent: every way
+  // out calls onClose directly. Waiting for the dialog's own `close` event
+  // instead left it closed but mounted wherever that event was late — the
+  // window then believed the settings were still open.
+  useEffect(() => {
+    const node = dialog.current;
+    if (node !== null && !node.open) {
+      node.showModal();
+    }
+  }, []);
   const [settings, setSettings] = useState<main.Settings | null>(null);
   const [wantsSync, setWantsSync] = useState(false);
   // The form is a thing you open, not the default view. With sync already
@@ -206,9 +222,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   );
 
   /**
-   * Reintentar la conexión a la base, que es distinto de "Reconectar" en la
-   * barra de arriba: aquel busca el backend en esta computadora, y el backend
-   * contesta perfectamente bien mientras su conexión a la base está caída.
+   * Reintentar la conexión a la base, que es distinto de "Buscar de nuevo" en
+   * las pantallas de estado: aquel busca el backend en esta computadora, y el
+   * backend contesta perfectamente bien mientras su conexión a la base está
+   * caída.
    */
   const retry = useCallback(() => {
     setBusy("retrying");
@@ -271,25 +288,32 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   );
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: the backdrop is a courtesy;
-    // the dialog itself is reachable and closable from the keyboard.
-    <div className="backdrop" onClick={onClose}>
-      <div
-        className="dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Configuración"
-        onClick={(event) => event.stopPropagation()}
-      >
+    // biome-ignore lint/a11y/useKeyWithClickEvents: a click that lands on the dialog itself is one on its backdrop (the sheet inside fills the rest); Escape already closes it from the keyboard.
+    <dialog
+      ref={dialog}
+      className="dialog"
+      aria-label="Configuración"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="sheet">
         <header className="dialog-head">
           <h2>Configuración</h2>
           <button
             type="button"
-            className="action"
+            className="icon-button"
             onClick={onClose}
             aria-label="Cerrar"
+            title="Cerrar"
           >
-            ✕
+            <X aria-hidden="true" />
           </button>
         </header>
 
@@ -311,8 +335,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           )
         ) : (
           <>
-            <section>
-              <h3>Sincronización</h3>
+            <section className="card">
+              <h3>
+                <Cloud aria-hidden="true" />
+                Sincronización
+              </h3>
               <p className="detail">
                 Por defecto tus lecturas viven sólo en esta computadora. Si
                 querés tenerlas en varias, o un respaldo fuera del equipo, podés
@@ -338,7 +365,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               {settings.syncConfigured && !editing && (
                 <div className="fields">
                   <p
-                    className={`detail ${
+                    className={`detail status-line ${
                       !settings.syncLive.asked
                         ? ""
                         : settings.syncLive.connected
@@ -690,8 +717,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               )}
             </section>
 
-            <section>
-              <h3>Extensión del navegador</h3>
+            <section className="card">
+              <h3>
+                <Puzzle aria-hidden="true" />
+                Extensión del navegador
+              </h3>
               <p className="detail">
                 Es la que detecta qué capítulo estás leyendo. Sin ella, la
                 biblioteca no se llena sola.
@@ -751,8 +781,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               )}
             </section>
 
-            <section>
-              <h3>Con qué navegador abrir tus mangas</h3>
+            <section className="card">
+              <h3>
+                <Globe aria-hidden="true" />
+                Con qué navegador abrir tus mangas
+              </h3>
               <p className="detail">
                 Conviene el mismo donde instalaste la extensión: si un capítulo
                 se abre en otro, esa lectura no queda registrada.
@@ -791,8 +824,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               )}
             </section>
 
-            <section>
-              <h3>Estado</h3>
+            <section className="card">
+              <h3>
+                <Info aria-hidden="true" />
+                Estado
+              </h3>
               <dl className="status">
                 <dt>Servicio</dt>
                 <dd>
@@ -821,6 +857,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </>
         )}
       </div>
-    </div>
+    </dialog>
   );
 }
