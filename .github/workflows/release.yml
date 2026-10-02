@@ -85,6 +85,13 @@ jobs:
         with:
           bun-version: ${{ steps.sources.outputs.bun }}
 
+      # The extension's build runs WXT, whose CLI runs on Node and needs 22 or
+      # later from 0.21 on: pinned, as in the extension's own CI, rather than
+      # left to whatever the runner image ships.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - name: Build the dashboard
         working-directory: sources/dashboard
         run: |
