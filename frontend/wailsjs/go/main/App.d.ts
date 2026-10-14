@@ -11,6 +11,8 @@ export function DiagnoseSync():Promise<main.Diagnosis>;
 
 export function DismissUpdate(arg1:string):Promise<void>;
 
+export function ExportLibrary(arg1:string,arg2:main.ExportLabels):Promise<main.ExportOutcome>;
+
 export function Install():Promise<main.InstallOutcome>;
 
 export function Look():Promise<installer.State>;

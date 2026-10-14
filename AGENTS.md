@@ -6,7 +6,8 @@ someone who does not program. One download, and the browser extension is one cli
 **Current state.** Released and in use: the installer (first install, and updating the backend
 in place when a newer app is installed over an older one), the window, and the settings
 screen (sync with a diagnosis of why it is down, the extension, which browser opens a
-chapter). macOS Apple Silicon and Windows x64, from GitHub Releases.
+chapter, exporting the library as a JSON backup or a CSV). macOS Apple Silicon and Windows
+x64, from GitHub Releases.
 
 Sibling repos, consumed but never merged into this one:
 - `../manga-tracker-api` — the backend. Runs as a **system service**, not as a child of this
@@ -21,7 +22,9 @@ Three responsibilities, and nothing else:
 1. **Installer.** Copies the backend tree into the user's data directory, registers the
    system service and starts it.
 2. **Window.** Shows the dashboard served by that backend.
-3. **Settings.** Opt-in sync, and a per-browser button to install the extension.
+3. **Settings.** Opt-in sync, a per-browser button to install the extension, and a copy of
+   the library to keep — the export is the backend's; saving it to a file is the window's,
+   because the embedded dashboard cannot (see the download rule below).
 
 It **does not own the backend process**. That is the load-bearing decision of the whole
 design: if the backend only lived while the app was open, the extension could not record a
@@ -79,6 +82,13 @@ working. It is a control panel, not a runtime.
   `current`, `available`, `unknown` and `development` (a build with no release tag, which asks
   nothing). The window's notice and the settings section are `frontend/src/Updates.tsx`, their
   wording `frontend/src/updateStatus.ts`
+- `internal/export/` — saves the backend's `GET /api/library/export?format=json|csv` into
+  the file the save dialog answered: written beside it and renamed over it only once whole,
+  so a transfer that stops halfway leaves the previous file alone. Its own HTTP client — the
+  app's shared one times out at 5 s, and a big library is hundreds of MB — bounded on the
+  headers only. Errors are `ErrUnsupported` (an older backend), `ErrDownload`, `ErrWrite`,
+  which `ExportLibrary` turns into codes. The settings section is `frontend/src/Backup.tsx`,
+  its wording and the dialog's own words `frontend/src/backupOutcome.ts`
 - `internal/publicip/` — the address this machine appears to come from, which is the only way
   to learn what an allowlist has to contain. **IPv4 pinned**: on a dual-stack machine an
   unpinned request answers with the IPv6 address, and a firewall rule written from that allows
@@ -128,6 +138,15 @@ working. It is a control panel, not a runtime.
   `target="_blank"` inside that frame did nothing at all; the dashboard cancels the click and
   posts the URL up instead. And the browser has to be *chosen*: opening the system default
   can mean opening where the extension is not, and a chapter read there records nothing.
+- **A download inside the embedded dashboard does nothing on macOS.** Wails 2.16's darwin
+  frontend implements no download handling — no `WKDownload`, nothing deciding a navigation
+  response — the same gap as the missing new-window handler above. So the library export is
+  not a link in the dashboard: `ExportLibrary` checks a backend is answering *before* the
+  native save dialog opens (picking a place for a file that cannot be produced is a
+  question wasted), takes the dialog's answer, and has `internal/export` fetch and write it.
+  Cancelling is a state (`cancelled`), not a failure. The dialog's title and filter name
+  come from the window like every other word on screen (`ExportLabels`). Anything else
+  that ever needs to hand the user a file goes the same way.
 - **While the dashboard is showing, the window has no bar of its own.** The two stacked bars
   (this one with the backend's URL, the dashboard's repeating the name) became one: the
   dashboard's, which carries a settings button only when greeted, and asks for them with

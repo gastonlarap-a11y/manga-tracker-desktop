@@ -24,6 +24,7 @@ import {
   type Saving,
   sinceLabel,
 } from "./syncOutcome";
+import { BackupSection } from "./Backup";
 import { UpdatesSection } from "./Updates";
 
 /**
@@ -824,6 +825,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 <p className="detail bad">{browserNotice}</p>
               )}
             </section>
+
+            <BackupSection />
 
             <section className="card">
               <h3>

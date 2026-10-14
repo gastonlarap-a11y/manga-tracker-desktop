@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 
 	"manga-tracker-desktop/internal/backend"
 	"manga-tracker-desktop/internal/browsers"
+	"manga-tracker-desktop/internal/export"
 	"manga-tracker-desktop/internal/installer"
 	"manga-tracker-desktop/internal/payload"
 	"manga-tracker-desktop/internal/prefs"
@@ -78,6 +80,10 @@ type App struct {
 	// probe's. Empty and nil mean the real ones.
 	updateEndpoint string
 	buildVersion   func() string
+
+	// The export's save dialog, as a field because the real one needs a
+	// running window. Nil means runtime.SaveFileDialog.
+	saveDialog func(ctx context.Context, options runtime.SaveDialogOptions) (string, error)
 }
 
 func NewApp() *App {
@@ -882,6 +888,96 @@ func (a *App) OpenChapter(link string) error {
 	}
 	runtime.BrowserOpenURL(a.ctx, link)
 	return nil
+}
+
+// exportTimeout bounds one export once a place is chosen. Loopback moves the
+// largest library the backend is measured at (~240 MB) in seconds, so this is
+// for a slow disk; a backend that never starts answering is cut off sooner, by
+// the export client's header timeout.
+const exportTimeout = 10 * time.Minute
+
+// ExportLabels are the save dialog's words. The window writes them, as it
+// writes every other word on screen.
+type ExportLabels struct {
+	Title string `json:"title"`
+	// FileKind names the dialog's one filter: "Respaldo (JSON)".
+	FileKind string `json:"fileKind"`
+}
+
+// ExportOutcome is how an export went.
+type ExportOutcome struct {
+	// State is "saved", "cancelled" or "failed". Cancelling the dialog is an
+	// answer, not a failure: nothing was asked of the backend.
+	State string `json:"state"`
+	// Problem, when it failed, is a code the window words: "no-backend",
+	// "unsupported", "download" or "write".
+	Problem string `json:"problem"`
+	Path    string `json:"path"`
+	Bytes   int64  `json:"bytes"`
+	// Detail is the technical error, shown under the window's sentence.
+	Detail string `json:"detail"`
+}
+
+// ExportLibrary saves a copy of the library — "json", everything, or "csv",
+// one row per series — where the person picks in a save dialog.
+//
+// The app does it rather than the dashboard because the dashboard cannot: a
+// download link inside the window does nothing on macOS (Wails 2.16 handles no
+// downloads in WKWebView). Whether a backend is answering is asked before the
+// dialog opens, so nobody picks a place for a file that cannot be produced.
+func (a *App) ExportLibrary(format string, labels ExportLabels) (ExportOutcome, error) {
+	if err := a.begin(); err != nil {
+		return ExportOutcome{}, err
+	}
+	kind, ok := export.ParseFormat(format)
+	if !ok {
+		return ExportOutcome{}, errors.New("bad-format")
+	}
+	baseURL := a.deps.Discover(a.ctx)
+	if baseURL == "" {
+		return ExportOutcome{State: "failed", Problem: "no-backend"}, nil
+	}
+	path, err := a.askWhereToSave(runtime.SaveDialogOptions{
+		DefaultFilename: export.FileName(kind, time.Now()),
+		Title:           labels.Title,
+		Filters: []runtime.FileFilter{
+			{DisplayName: labels.FileKind, Pattern: export.Pattern(kind)},
+		},
+		CanCreateDirectories: true,
+	})
+	if err != nil {
+		return ExportOutcome{}, fmt.Errorf("opening the save dialog: %w", err)
+	}
+	if path == "" {
+		return ExportOutcome{State: "cancelled"}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(a.ctx, exportTimeout)
+	defer cancel()
+	written, err := export.Save(ctx, export.Client(), baseURL, kind, path)
+	if err != nil {
+		return ExportOutcome{State: "failed", Problem: exportProblem(err), Path: path, Detail: err.Error()}, nil
+	}
+	return ExportOutcome{State: "saved", Path: path, Bytes: written}, nil
+}
+
+// exportProblem is the code for an error from export.Save.
+func exportProblem(err error) string {
+	switch {
+	case errors.Is(err, export.ErrUnsupported):
+		return "unsupported"
+	case errors.Is(err, export.ErrWrite):
+		return "write"
+	default:
+		return "download"
+	}
+}
+
+func (a *App) askWhereToSave(options runtime.SaveDialogOptions) (string, error) {
+	if a.saveDialog != nil {
+		return a.saveDialog(a.ctx, options)
+	}
+	return runtime.SaveFileDialog(a.ctx, options)
 }
 
 func (a *App) service(args ...string) (servicecli.Reply, error) {

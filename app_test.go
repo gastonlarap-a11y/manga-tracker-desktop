@@ -466,4 +466,7 @@ func TestNoDataDirectoryIsReportedRatherThanCrashing(t *testing.T) {
 	if err := app.StartService(); err == nil {
 		t.Error("StartService() succeeded with no data directory")
 	}
+	if _, err := app.ExportLibrary("json", ExportLabels{}); err == nil {
+		t.Error("ExportLibrary() succeeded with no data directory")
+	}
 }
