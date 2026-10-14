@@ -58,6 +58,40 @@ export namespace main {
 	        this.address = source["address"];
 	    }
 	}
+	export class ExportLabels {
+	    title: string;
+	    fileKind: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ExportLabels(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.title = source["title"];
+	        this.fileKind = source["fileKind"];
+	    }
+	}
+	export class ExportOutcome {
+	    state: string;
+	    problem: string;
+	    path: string;
+	    bytes: number;
+	    detail: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ExportOutcome(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.state = source["state"];
+	        this.problem = source["problem"];
+	        this.path = source["path"];
+	        this.bytes = source["bytes"];
+	        this.detail = source["detail"];
+	    }
+	}
 	export class InstallOutcome {
 	    baseUrl: string;
 	    port: number;

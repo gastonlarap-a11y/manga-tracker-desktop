@@ -18,6 +18,10 @@ export function DismissUpdate(arg1) {
   return window['go']['main']['App']['DismissUpdate'](arg1);
 }
 
+export function ExportLibrary(arg1, arg2) {
+  return window['go']['main']['App']['ExportLibrary'](arg1, arg2);
+}
+
 export function Install() {
   return window['go']['main']['App']['Install']();
 }

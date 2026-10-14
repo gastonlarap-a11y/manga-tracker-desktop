@@ -36,6 +36,10 @@ Install the new version over the old one — there is nothing to uninstall. Open
 afterwards: it notices the backend beside it is a version behind, stops it, replaces it and
 starts it again. Your library is untouched; it lives outside the directory that gets replaced.
 
+If you sync two or more computers, update all of them. A computer still on 0.1.23 or older
+reads the **En pausa** status as **Leyendo**, and the next time it touches that series it
+syncs that back to the others.
+
 ## Where your data lives
 
 In one SQLite file on your own computer, under the application-support directory the settings
@@ -47,6 +51,11 @@ same library on two computers, and a copy that survives losing one of them. It i
 compatible connection *you* own — the app never has a server of its own to offer. Even with it
 on, SQLite still answers every read and write: sync is a background convergence, never
 something a page waits for, so it cannot make the library depend on connectivity.
+
+**A copy to keep, without any of that:** Configuración → *Tu biblioteca* exports a JSON backup
+(every series with its status, tags and other names, and every chapter read with its date and
+site) or a CSV with one row per series, for a spreadsheet or another tracker that imports by
+title. Restoring from a backup is not implemented yet.
 
 ## How the pieces fit
 
